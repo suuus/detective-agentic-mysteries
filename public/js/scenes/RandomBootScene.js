@@ -1,0 +1,229 @@
+/**
+ * RandomBootScene — fetches generated mystery data and creates dynamic textures
+ * using the AI-provided visual palette and character colors.
+ */
+export default class RandomBootScene extends Phaser.Scene {
+  constructor() {
+    super({ key: 'RandomBootScene' });
+  }
+
+  async create() {
+    const { width, height } = this.cameras.main;
+    const loadText = this.add.text(width/2, height/2, 'Loading generated world...', {
+      fontFamily: '"Playfair Display", serif', fontSize: '18px', color: '#c9a84c'
+    }).setOrigin(0.5);
+
+    try {
+      const res = await fetch('/api/mystery/rooms');
+      const data = await res.json();
+      window._generatedWorld = data;
+    } catch(err) {
+      loadText.setText('Failed to load world: ' + err.message);
+      return;
+    }
+
+    this._genTiles();
+    this._genFurniture();
+    this._genPlayer();
+    this._genPrompts();
+    this._genNPCs();
+    this._genEvidence();
+    this._genCrimeScene();
+
+    this.scene.start('RandomManorScene');
+  }
+
+  _hex(str) {
+    if (!str || typeof str !== 'string') return 0x333333;
+    return parseInt(str.replace('#', ''), 16) || 0x333333;
+  }
+
+  _tex(key, w, h, fn) {
+    const g = this.make.graphics({ add: false });
+    fn(g, w, h);
+    g.generateTexture(key, w, h);
+    g.destroy();
+  }
+
+  _genPlayer() {
+    const S = 32;
+    const dirNames = ['down','left','right','up'];
+    for (let d = 0; d < 4; d++) {
+      for (let f = 0; f < 3; f++) {
+        const key = `player_${dirNames[d]}_${f}`;
+        this._tex(key, S, S, (g) => {
+          const cx = S/2, cy = S/2;
+          const wb = f === 1 ? -1 : f === 2 ? 1 : 0;
+          g.fillStyle(0x5c4a32); g.fillRect(cx-6, cy-2+wb, 12, 14);
+          g.fillStyle(0xe8c99b); g.fillRect(cx-5, cy-10+wb, 10, 9);
+          g.fillStyle(0x3a2f24); g.fillRect(cx-7, cy-14+wb, 14, 5); g.fillRect(cx-5, cy-16+wb, 10, 3);
+          if (dirNames[d] !== 'up') {
+            g.fillStyle(0x222222);
+            if (dirNames[d] === 'down') { g.fillRect(cx-3,cy-6+wb,2,2); g.fillRect(cx+1,cy-6+wb,2,2); }
+            else if (dirNames[d] === 'left') g.fillRect(cx-4,cy-6+wb,2,2);
+            else g.fillRect(cx+2,cy-6+wb,2,2);
+          }
+          g.fillStyle(0x2a2a2a); g.fillRect(cx-4, cy+12, 3, 4); g.fillRect(cx+1, cy+12, 3, 4);
+          g.fillStyle(0x1a1a1a); g.fillRect(cx-5, cy+15, 4, 2); g.fillRect(cx+1, cy+15, 4, 2);
+        });
+      }
+    }
+    const fr = 8;
+    for (let d = 0; d < 4; d++) {
+      const dir = dirNames[d];
+      this.anims.create({ key: `walk-${dir}`, frames: [
+        { key: `player_${dir}_0` }, { key: `player_${dir}_1` }, { key: `player_${dir}_0` }, { key: `player_${dir}_2` },
+      ], frameRate: fr, repeat: -1 });
+      this.anims.create({ key: `idle-${dir}`, frames: [{ key: `player_${dir}_0` }], frameRate: 1, repeat: -1 });
+    }
+  }
+
+  _genTiles() {
+    const v = window._generatedWorld?.visual || {};
+    const wallCol = this._hex(v.wallColor || '#2d1117');
+    const wallAcc = this._hex(v.wallAccent || '#3a1520');
+
+    // Floor tiles — base set plus new ones
+    this._tex('tile_floor', 32, 32, g => { g.fillStyle(0x3d3225); g.fillRect(0,0,32,32); g.lineStyle(1,0x342b1f); g.strokeRect(0,0,32,32); });
+    this._tex('tile_carpet', 32, 32, g => { g.fillStyle(0x4a1a2a); g.fillRect(0,0,32,32); g.lineStyle(1,0xc9a84c,0.2); g.strokeRect(4,4,24,24); });
+    this._tex('tile_metal', 32, 32, g => { g.fillStyle(0x3a3a3a); g.fillRect(0,0,32,32); g.fillStyle(0x444444); g.fillCircle(8,8,2); g.fillCircle(24,8,2); g.fillCircle(8,24,2); g.fillCircle(24,24,2); });
+    this._tex('tile_wood_deck', 32, 32, g => { g.fillStyle(0x5c4a32); g.fillRect(0,0,32,32); g.lineStyle(1,0x4a3a22); for(let i=0;i<4;i++){ g.beginPath(); g.moveTo(0,8+i*8); g.lineTo(32,8+i*8); g.strokePath(); }});
+    this._tex('tile_carpet_blue', 32, 32, g => { g.fillStyle(0x1a2a4a); g.fillRect(0,0,32,32); g.lineStyle(1,0x2a3a5a,0.3); g.strokeRect(4,4,24,24); });
+    this._tex('tile_carpet_red', 32, 32, g => { g.fillStyle(0x4a1a1a); g.fillRect(0,0,32,32); g.lineStyle(1,0x5a2a2a,0.3); g.strokeRect(4,4,24,24); });
+    this._tex('tile_tile_white', 32, 32, g => { g.fillStyle(0xd0d0d0); g.fillRect(0,0,32,32); g.fillStyle(0xc0c0c0); g.fillRect(0,0,16,16); g.fillRect(16,16,16,16); });
+    // New floor types
+    this._tex('tile_sand', 32, 32, g => { g.fillStyle(0xc2b280); g.fillRect(0,0,32,32); g.fillStyle(0xb8a870,0.5); g.fillRect(4,12,8,3); g.fillRect(18,6,6,2); });
+    this._tex('tile_ice', 32, 32, g => { g.fillStyle(0xb0d4e8); g.fillRect(0,0,32,32); g.fillStyle(0xc8e4f8,0.6); g.fillRect(2,2,12,6); g.fillRect(16,18,14,8); });
+    this._tex('tile_grass', 32, 32, g => { g.fillStyle(0x2d5a1e); g.fillRect(0,0,32,32); g.fillStyle(0x3a6a28); g.fillRect(4,4,6,3); g.fillRect(18,14,8,4); g.fillRect(8,24,6,3); });
+    this._tex('tile_stone', 32, 32, g => { g.fillStyle(0x6b6b6b); g.fillRect(0,0,32,32); g.lineStyle(1,0x555555); g.strokeRect(0,0,16,16); g.strokeRect(16,0,16,16); g.strokeRect(8,16,16,16); });
+
+    // Walls use AI-provided colors
+    this._tex('tile_wall', 32, 32, g => {
+      g.fillStyle(wallCol); g.fillRect(0,0,32,32);
+      g.fillStyle(wallAcc); g.fillRect(2,2,28,12); g.fillRect(2,18,28,12);
+    });
+  }
+
+  _genFurniture() {
+    const v = window._generatedWorld?.visual || {};
+    const style = v.furnitureStyle || 'wooden';
+
+    const palettes = {
+      wooden:     { pri: 0x5c3a1e, sec: 0x6b4423, acc: 0x4a2e16 },
+      metal:      { pri: 0x555555, sec: 0x6a6a6a, acc: 0x444444 },
+      modern:     { pri: 0x2a2a2a, sec: 0x3a3a3a, acc: 0x1a1a1a },
+      ornate:     { pri: 0x5c3a1e, sec: 0xc9a84c, acc: 0x8B6914 },
+      rustic:     { pri: 0x6b4423, sec: 0x5c4a32, acc: 0x3a2a1a },
+      clinical:   { pri: 0xcccccc, sec: 0xdddddd, acc: 0xaaaaaa },
+      futuristic: { pri: 0x1a1a2e, sec: 0x2a2a4a, acc: 0x0044aa },
+    };
+    const p = palettes[style] || palettes.wooden;
+
+    this._tex('furn_table', 48, 32, g => { g.fillStyle(p.pri); g.fillRect(4,4,40,24); g.fillStyle(p.sec); g.fillRect(6,6,36,20); });
+    this._tex('furn_desk', 64, 32, g => { g.fillStyle(p.pri); g.fillRect(0,4,64,24); g.fillStyle(p.acc); g.fillRect(2,8,60,18); });
+    this._tex('furn_bookshelf', 64, 32, g => {
+      g.fillStyle(p.acc); g.fillRect(0,0,64,32);
+      const c=[0x8B0000,0x00008B,0x006400,0x4B0082]; for(let i=0;i<8;i++){ g.fillStyle(c[i%4]); g.fillRect(4+i*7,4,6,12); g.fillRect(4+i*7,18,6,12); }
+    });
+    this._tex('furn_plant', 24, 32, g => { g.fillStyle(p.pri); g.fillRect(4,16,16,14); g.fillStyle(0x228B22); g.fillRect(8,2,3,14); g.fillRect(4,0,6,6); g.fillRect(12,2,6,6); });
+    // Extra furniture
+    this._tex('furn_crate', 32, 32, g => { g.fillStyle(p.pri); g.fillRect(2,2,28,28); g.lineStyle(2,p.acc); g.strokeRect(4,4,24,24); g.beginPath(); g.moveTo(4,4); g.lineTo(28,28); g.strokePath(); });
+    this._tex('furn_cabinet', 48, 32, g => { g.fillStyle(p.pri); g.fillRect(2,0,44,32); g.fillStyle(p.sec); g.fillRect(4,2,18,28); g.fillRect(26,2,18,28); g.fillStyle(p.acc); g.fillCircle(20,16,2); g.fillCircle(28,16,2); });
+  }
+
+  _genNPCs() {
+    const world = window._generatedWorld;
+    if (!world) return;
+    // Fallback palette if AI didn't provide spriteColors
+    const fallback = [
+      { body: 0x8B2252, hair: 0xDAA520 }, { body: 0x2F4F4F, hair: 0x696969 },
+      { body: 0x4a3280, hair: 0x8B4513 }, { body: 0x1a1a2e, hair: 0x333333 },
+      { body: 0x2d2d2d, hair: 0xaaaaaa }, { body: 0x800020, hair: 0xDDDD00 },
+      { body: 0x2a4a2a, hair: 0x1a1a1a }, { body: 0x4a4a4a, hair: 0x6b4423 },
+    ];
+    world.characters.forEach((char, i) => {
+      const bodyCol = char.spriteColors ? this._hex(char.spriteColors.body) : fallback[i % fallback.length].body;
+      const hairCol = char.spriteColors ? this._hex(char.spriteColors.hair) : fallback[i % fallback.length].hair;
+      this._tex('npc_' + char.id, 32, 32, g => {
+        const cx=16, cy=16;
+        g.fillStyle(bodyCol); g.fillRect(cx-6,cy-2,12,14);
+        g.fillStyle(0xe8c99b); g.fillRect(cx-5,cy-10,10,9);
+        g.fillStyle(hairCol); g.fillRect(cx-5,cy-13,10,5);
+        g.fillStyle(0x222222); g.fillRect(cx-3,cy-6,2,2); g.fillRect(cx+1,cy-6,2,2);
+        g.fillStyle(0x2a2a2a); g.fillRect(cx-4,cy+12,3,4); g.fillRect(cx+1,cy+12,3,4);
+      });
+    });
+  }
+
+  _genEvidence() {
+    const world = window._generatedWorld;
+    if (!world) return;
+    const accent = this._hex(world.visual?.accentColor || '#c9a84c');
+
+    world.evidence.forEach((ev) => {
+      const col = ev.color ? this._hex(ev.color) : 0xf5f0e0;
+      // Each evidence item gets a unique color from the AI
+      this._tex('ev_' + ev.id, 16, 16, g => {
+        g.fillStyle(col); g.fillRect(3,2,10,12);
+        g.fillStyle(col, 0.6); g.fillRect(5,4,6,3);
+        // Small detail mark
+        g.fillStyle(0x333333); g.fillRect(5,9,5,1); g.fillRect(5,11,4,1);
+      });
+    });
+    // Glow uses accent color
+    this._tex('ev_glow', 24, 24, g => { g.fillStyle(accent, 0.4); g.fillCircle(12, 12, 10); });
+  }
+
+  _genPrompts() {
+    this._tex('prompt_talk', 64, 24, g => { g.fillStyle(0x000000); g.fillRect(0,0,64,24); g.lineStyle(1,0xc9a84c); g.strokeRect(0,0,64,24); });
+    this._tex('prompt_examine', 80, 24, g => { g.fillStyle(0x000000); g.fillRect(0,0,80,24); g.lineStyle(1,0xc9a84c); g.strokeRect(0,0,80,24); });
+  }
+
+  _genCrimeScene() {
+    this._tex('crime_body_outline', 48, 64, g => {
+      g.lineStyle(2, 0xcccccc, 0.8);
+      g.strokeCircle(24, 8, 6);
+      g.lineBetween(24, 14, 24, 18);
+      g.strokeRect(14, 18, 20, 20);
+      g.lineBetween(14, 20, 4, 32);
+      g.lineBetween(4, 32, 2, 38);
+      g.lineBetween(34, 20, 44, 32);
+      g.lineBetween(44, 32, 46, 38);
+      g.lineBetween(18, 38, 12, 52);
+      g.lineBetween(12, 52, 8, 62);
+      g.lineBetween(30, 38, 36, 52);
+      g.lineBetween(36, 52, 40, 62);
+      g.fillStyle(0xaaaaaa, 0.15);
+      g.fillCircle(24, 30, 18);
+    });
+
+    this._tex('crime_blood_1', 16, 16, g => {
+      g.fillStyle(0x4a0000, 0.7);
+      g.fillCircle(8, 8, 5);
+      g.fillStyle(0x3a0000, 0.5);
+      g.fillCircle(5, 6, 3);
+      g.fillCircle(11, 10, 2);
+      g.fillRect(3, 8, 3, 2);
+    });
+
+    this._tex('crime_blood_2', 24, 24, g => {
+      g.fillStyle(0x3a0000, 0.6);
+      g.fillCircle(12, 12, 10);
+      g.fillStyle(0x4a0000, 0.5);
+      g.fillCircle(12, 12, 7);
+      g.fillStyle(0x2a0000, 0.4);
+      g.fillCircle(10, 14, 4);
+      g.fillCircle(16, 10, 3);
+    });
+
+    this._tex('crime_tape', 64, 8, g => {
+      g.fillStyle(0xccaa00); g.fillRect(0, 0, 64, 8);
+      g.fillStyle(0x111111);
+      for (let i = 0; i < 8; i++) {
+        const x = i * 8;
+        g.fillTriangle(x, 0, x+4, 4, x+8, 0);
+        g.fillTriangle(x, 8, x+4, 4, x+8, 8);
+      }
+    });
+  }
+}

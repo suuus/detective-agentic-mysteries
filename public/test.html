@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html><head>
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+</head><body style="background:#000">
+<div id="game"></div>
+<script>
+class TestScene extends Phaser.Scene {
+  constructor() { super({ key: 'TestScene' }); }
+  create() {
+    // Method 1: graphics.generateTexture
+    const g = this.make.graphics({ add: false });
+    g.fillStyle(0xff0000);
+    g.fillRect(0, 0, 32, 32);
+    g.generateTexture('red_tile', 32, 32);
+    g.destroy();
+
+    // Method 2: direct graphics
+    const g2 = this.add.graphics();
+    g2.fillStyle(0x00ff00);
+    g2.fillRect(100, 100, 64, 64);
+
+    // Use generated texture
+    for (let x = 0; x < 5; x++)
+      for (let y = 0; y < 5; y++)
+        this.add.image(x*34+200, y*34+200, 'red_tile');
+
+    this.add.text(10, 10, 'If you see red squares and green box, textures work!', {
+      fontSize: '16px', color: '#fff'
+    });
+  }
+}
+new Phaser.Game({
+  type: Phaser.AUTO, width: 800, height: 600, parent: 'game',
+  backgroundColor: '#222', scene: [TestScene]
+});
+</script>
+</body></html>

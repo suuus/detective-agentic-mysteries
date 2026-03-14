@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shadows of Blackwood Manor</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Lora:ital,wght@0,400;0,700;1,400&display=swap"
+    rel="stylesheet"
+  />
+
+  <link rel="stylesheet" href="css/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+</head>
+<body>
+  <!-- ══════════════ GAME CANVAS ══════════════ -->
+  <div id="game-container"></div>
+
+  <!-- ══════════════ LEVEL SELECT ══════════════ -->
+  <div id="level-select" class="modal-backdrop">
+    <div class="modal" style="text-align:center">
+      <h2 style="font-family:var(--font-heading);color:var(--gold);margin-bottom:8px">🕵️ Detective Mysteries</h2>
+      <p style="color:var(--cream);opacity:0.6;margin-bottom:24px">Choose your case</p>
+      <div id="level-buttons" style="display:flex;flex-direction:column;gap:12px">
+        <button class="gold-btn level-btn" data-level="manor" style="padding:16px 24px;text-align:left">
+          <strong>Shadows of Blackwood Manor</strong><br>
+          <span style="font-size:0.85rem;opacity:0.7">A murder at a countryside manor. 5 suspects.</span>
+        </button>
+        <button class="gold-btn level-btn" data-level="cruise" style="padding:16px 24px;text-align:left">
+          <strong>Death on the Meridian</strong><br>
+          <span style="font-size:0.85rem;opacity:0.7">A billionaire dead on a luxury cruise. 11 suspects.</span>
+        </button>
+        <button class="gold-btn level-btn" data-level="random" style="padding:16px 24px;text-align:left;border-style:dashed">
+          <strong>🎲 Random Mystery</strong><br>
+          <span style="font-size:0.85rem;opacity:0.7">AI generates a unique mystery. New every time.</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ DIALOG OVERLAY ══════════════ -->
+  <div id="dialog-overlay" class="panel hidden">
+    <div class="dialog-inner">
+      <div class="dialog-header">
+        <div class="portrait-frame">
+          <div id="dialog-portrait" class="portrait"></div>
+        </div>
+        <span id="dialog-character-name" class="character-name">???</span>
+        <div id="dialog-mood" class="dialog-mood hidden"></div>
+        <button id="dialog-close-btn" class="icon-btn" title="Close">&times;</button>
+      </div>
+
+      <div id="dialog-history" class="dialog-history"></div>
+
+      <div id="typing-indicator" class="typing-indicator hidden">
+        <span></span><span></span><span></span>
+      </div>
+
+      <div class="dialog-input-row">
+        <input
+          id="dialog-input"
+          type="text"
+          placeholder="Ask a question…"
+          autocomplete="off"
+        />
+        <button id="dialog-send-btn" class="gold-btn">Send</button>
+        <button id="dialog-evidence-btn" class="gold-btn outline">Show Evidence</button>
+      </div>
+
+      <!-- Evidence sub-panel inside dialog -->
+      <div id="dialog-evidence-panel" class="evidence-subpanel hidden">
+        <h4>Select evidence to present</h4>
+        <ul id="dialog-evidence-list"></ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ INVENTORY PANEL ══════════════ -->
+  <div id="inventory-panel" class="side-panel right hidden">
+    <h3>Evidence Collected</h3>
+    <ul id="inventory-list"></ul>
+  </div>
+
+  <!-- ══════════════ NOTEBOOK PANEL ══════════════ -->
+  <div id="notebook-panel" class="side-panel left hidden">
+    <h3>Detective's Notebook</h3>
+    <ul id="notebook-list"></ul>
+  </div>
+
+  <!-- ══════════════ ACCUSATION MODAL ══════════════ -->
+  <div id="accusation-modal" class="modal-backdrop hidden">
+    <div class="modal">
+      <h2>Make Your Accusation</h2>
+      <p id="accusation-attempts" class="attempts-info">Attempts remaining: 3</p>
+
+      <label for="suspect-select">Suspect</label>
+      <select id="suspect-select">
+        <option value="" disabled selected>— choose a suspect —</option>
+      </select>
+
+      <label for="motive-input">Motive</label>
+      <textarea id="motive-input" rows="3" placeholder="Describe the motive…"></textarea>
+
+      <fieldset id="evidence-checkboxes">
+        <legend>Supporting Evidence</legend>
+        <!-- populated dynamically -->
+      </fieldset>
+
+      <div class="modal-actions">
+        <button id="accusation-submit" class="gold-btn">Submit Accusation</button>
+        <button id="accusation-cancel" class="gold-btn outline">Cancel</button>
+      </div>
+
+      <div id="accusation-result" class="accusation-result hidden"></div>
+    </div>
+  </div>
+
+  <!-- ══════════════ FORENSICS PANEL ══════════════ -->
+  <div id="forensics-panel" class="modal-backdrop hidden">
+    <div class="modal">
+      <h2 id="forensics-title" style="font-family:var(--font-heading);color:var(--gold)">🔬 Forensic Analysis</h2>
+      <p id="forensics-text" style="color:var(--cream);line-height:1.6;margin:16px 0;white-space:pre-wrap"></p>
+      <button id="forensics-close" class="gold-btn" onclick="document.getElementById('forensics-panel').classList.add('hidden')">Close</button>
+    </div>
+  </div>
+
+  <!-- ══════════════ NARRATOR ══════════════ -->
+  <div id="narrator-bar" class="narrator-bar hidden">
+    <p id="narrator-text"></p>
+  </div>
+
+  <!-- ══════════════ TIMED EVENT / CHASE BANNERS ══════════════ -->
+  <div id="timed-event-banner" class="hidden">
+    <span id="timed-event-text"></span>
+    <span id="timed-event-timer"></span>
+  </div>
+  <div id="chase-banner" class="hidden">
+    <span id="chase-text"></span>
+  </div>
+
+  <!-- ══════════════ HUD BAR ══════════════ -->
+  <div id="hud-bar">
+    <div id="hud-clock" class="hud-clock">
+      <span id="hud-clock-icon">🌅</span>
+      <span id="hud-clock-day">Day 1</span>
+      <span id="hud-clock-sep">·</span>
+      <span id="hud-clock-time">8:00 PM</span>
+      <div id="hud-clock-bar"><div id="hud-clock-fill"></div></div>
+    </div>
+    <div id="hud-profile" class="hud-profile" title="Your detective style">
+      <span id="hud-profile-icon">🕵️</span>
+      <span id="hud-profile-style">Unknown</span>
+    </div>
+    <button id="hud-inventory" class="hud-btn" title="Evidence">
+      <span class="hud-icon">🔍</span>
+      <span class="hud-label">Evidence</span>
+    </button>
+    <button id="hud-notebook" class="hud-btn" title="Notebook">
+      <span class="hud-icon">📓</span>
+      <span class="hud-label">Notebook</span>
+    </button>
+    <button id="hud-accuse" class="hud-btn accent" title="Accuse">
+      <span class="hud-icon">⚖️</span>
+      <span class="hud-label">Accuse</span>
+    </button>
+    <button id="btn-flashlight" class="hud-btn" title="Flashlight OFF">
+      <span class="hud-icon">🔦</span>
+      <span class="hud-label">Light</span>
+    </button>
+    <button id="btn-music" class="hud-btn" title="Toggle Music">
+      <span class="hud-icon">🎵</span>
+      <span class="hud-label">Music</span>
+    </button>
+  </div>
+
+  <!-- ══════════════ NIGHT OVERLAY ══════════════ -->
+  <div id="night-overlay" class="modal-backdrop hidden">
+    <div class="night-content">
+      <h2 id="night-title" class="night-title"></h2>
+      <p id="night-subtitle" class="night-subtitle"></p>
+      <div id="night-conversation" class="night-conversation"></div>
+      <p id="night-prompt" class="night-prompt"></p>
+    </div>
+  </div>
+
+  <!-- ══════════════ CRIME RECONSTRUCTION ══════════════ -->
+  <div id="reconstruction-overlay" class="modal-backdrop hidden">
+    <div id="reconstruction-content">
+      <h2 id="reconstruction-title">🔍 Crime Reconstruction</h2>
+      <p id="reconstruction-text"></p>
+      <div id="reconstruction-progress"></div>
+    </div>
+  </div>
+
+  <!-- ══════════════ WIN / LOSE SCREEN ══════════════ -->
+  <div id="end-screen" class="modal-backdrop hidden">
+    <div class="modal end-modal">
+      <h2 id="end-title"></h2>
+      <p id="end-message"></p>
+      <button id="end-restart" class="gold-btn">Play Again</button>
+    </div>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+  <script>
+    window.addEventListener('error', e => {
+      const d = document.createElement('div');
+      d.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;padding:12px;z-index:9999;font-family:monospace;font-size:13px;white-space:pre-wrap';
+      d.textContent = 'JS ERROR: ' + e.message + '\n' + (e.filename || '') + ':' + (e.lineno || '');
+      document.body.appendChild(d);
+    });
+  </script>
+</body>
+</html>
