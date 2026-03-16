@@ -312,6 +312,7 @@ Return ONLY the JSON array, no other text.`
       for (const c of parsed) {
         if (c.npc1 && c.npc2 && c.topic && c.detail) {
           gameState.addContradiction(c.npc1, c.npc2, c.topic, c.detail);
+          gameState.addNotebookClue('🔍 Contradiction', `${c.npc1} and ${c.npc2} disagree about ${c.topic}: ${c.detail}`);
         }
       }
       if (parsed.length > 0) {
@@ -390,6 +391,8 @@ function createNPCHooks() {
                 gameState.addEavesdrop(npc.id, `Overheard ${charName} mention: "${snippet}..."`);
               }
             }
+            // Auto-add to notebook
+            gameState.addNotebookClue(charName, typeof clue === 'string' ? clue : JSON.stringify(clue));
             console.log(`🔎 Hook: ${charName} revealed a ${importance}-importance clue`);
           }
           break;
@@ -776,6 +779,9 @@ app.post("/api/evidence/:evidenceId/collect", (req, res) => {
     return;
   }
   const evidence = gameState.getEvidence(evidenceId);
+  if (evidence) {
+    gameState.addNotebookClue('📦 Evidence', `Found "${evidence.name}" in ${evidence.location}: ${evidence.description}`);
+  }
   res.json({ collected: true, evidence });
 });
 
@@ -814,6 +820,11 @@ app.get("/api/reputation", (_req, res) => {
 // Contradictions (for notebook)
 app.get("/api/contradictions", (_req, res) => {
   res.json(gameState.getContradictions());
+});
+
+// Notebook clues
+app.get("/api/notebook", (_req, res) => {
+  res.json({ clues: gameState.getNotebookClues(), contradictions: gameState.getContradictions() });
 });
 
 // Panic events

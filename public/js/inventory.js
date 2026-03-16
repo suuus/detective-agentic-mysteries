@@ -23,10 +23,8 @@ export class InventoryManager {
     try {
       const data = await this.api.getEvidence();
       this.evidence = Array.isArray(data) ? data : data.evidence ?? [];
-      this.clues = data.clues ?? this.clues;
-      await this._loadContradictions();
+      await this._loadNotebook();
       this.renderInventory();
-      this.renderNotebook();
     } catch (err) {
       console.warn('Failed to refresh evidence:', err);
     }
@@ -41,6 +39,9 @@ export class InventoryManager {
 
   toggleNotebook() {
     this.notebook.classList.toggle('hidden');
+    if (!this.notebook.classList.contains('hidden')) {
+      this._loadNotebook();
+    }
   }
 
   getCollected() {
@@ -88,10 +89,10 @@ export class InventoryManager {
     for (const clue of this.clues) {
       const li = document.createElement('li');
       li.innerHTML = `
-        <span class="item-icon">📝</span>
+        <span class="item-icon">${clue.icon || '📝'}</span>
         <span>
-          <span class="item-name">${clue.title ?? clue}</span>
-          <div class="item-desc">${clue.detail ?? ''}</div>
+          <span class="item-name">${clue.name}</span>
+          <div class="item-desc">${clue.desc}${clue.day ? ` <small style="opacity:0.4">(Day ${clue.day})</small>` : ''}</div>
         </span>
       `;
       this.notebookList.appendChild(li);
@@ -120,11 +121,14 @@ export class InventoryManager {
     }
   }
 
-  async _loadContradictions() {
+  async _loadNotebook() {
     try {
-      this.contradictions = await this.api.getContradictions();
+      const data = await (await fetch('/api/notebook')).json();
+      this.clues = (data.clues || []).map(c => ({ icon: '📝', name: c.source, desc: c.text, day: c.day }));
+      this.contradictions = data.contradictions || [];
+      this.renderNotebook();
     } catch (err) {
-      console.warn('Failed to load contradictions:', err);
+      console.warn('Failed to load notebook:', err);
     }
   }
 

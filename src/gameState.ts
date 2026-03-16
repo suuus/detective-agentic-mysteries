@@ -45,6 +45,8 @@ export interface GameState {
   alliances: { members: string[]; type: 'alliance' | 'rivalry'; reason: string }[];
   // New: tampered evidence
   tamperedEvidence: string[];
+  // Notebook clues — auto-populated from NPC reveals and key events
+  notebookClues: { source: string; text: string; day: number }[];
 }
 
 export interface Evidence {
@@ -377,6 +379,7 @@ export class GameStateManager {
       panicEvents: [],
       alliances: [],
       tamperedEvidence: [],
+      notebookClues: [],
     };
   }
 
@@ -707,6 +710,17 @@ export class GameStateManager {
 
   getContradictions(): typeof this.state.contradictions {
     return this.state.contradictions;
+  }
+
+  // ── Notebook Clues ─────────────────────────────────────────────
+  addNotebookClue(source: string, text: string): void {
+    if (!this.state.notebookClues.find(c => c.source === source && c.text === text)) {
+      this.state.notebookClues.push({ source, text, day: this.state.currentDay });
+    }
+  }
+
+  getNotebookClues(): typeof this.state.notebookClues {
+    return this.state.notebookClues;
   }
 
   // ── Panic Events ──────────────────────────────────────────────
