@@ -930,7 +930,8 @@ Speak to ${nameB} as yourself — not to the detective. Be raw, honest, emotiona
 Be vivid and natural. This isn't a formal interrogation — it's real people talking when they think no one is listening.`;
 
       const responseA1 = await sendAndCollect(idA, promptA1);
-      if (responseA1) exchanges.push({ speaker: idA, speakerName: nameA, text: responseA1 });
+      if (!responseA1) { console.warn(`⚠️  No response from ${nameA}, skipping pair`); continue; }
+      exchanges.push({ speaker: idA, speakerName: nameA, text: responseA1 });
 
       // Round 1: B responds
       const promptB1 = `[NIGHT — you are NOT speaking to the detective. ${nameA} has approached you privately.]
@@ -946,7 +947,8 @@ ${nameA} just said: "${responseA1}"
 React genuinely. This is private — no detective, no performance. Be emotional, be real. You can push back, break down, confess something, get angry, show vulnerability, or be manipulative. Let your feelings toward ${nameA} and about the murder shape how you respond.`;
 
       const responseB1 = await sendAndCollect(idB, promptB1);
-      if (responseB1) exchanges.push({ speaker: idB, speakerName: nameB, text: responseB1 });
+      if (!responseB1) { console.warn(`⚠️  No response from ${nameB}, skipping rest of pair`); continue; }
+      exchanges.push({ speaker: idB, speakerName: nameB, text: responseB1 });
 
       // Round 2: A reacts
       const promptA2 = `[NIGHT continues — still private with ${nameB} in ${pair.location}]
@@ -959,7 +961,7 @@ React from the gut. This conversation is escalating. Do you trust what they just
 
       // Round 2: B final word
       const promptB2 = `[NIGHT — final exchange with ${nameA} before you part ways]
-${nameA} just said: "${responseA2}"
+${nameA} just said: "${responseA2 || '...'}"
 
 This is your last word tonight. Make it count. A warning, a promise, a threat, a plea, an alliance, a betrayal — whatever this conversation has built to. After this you go your separate ways until morning.`;
 
@@ -1770,8 +1772,8 @@ You are deeply lonely and have invented an elaborate surveillance fantasy. You D
     ];
 
     const chosen = archetypes[Math.floor(Math.random() * archetypes.length)];
-    const rooms = Object.keys(generatedMystery?.rooms ?? {});
-    const room = rooms[Math.floor(Math.random() * rooms.length)] || 'room_0';
+    const roomList = generatedMystery?.rooms ?? [];
+    const room = roomList.length > 0 ? roomList[Math.floor(Math.random() * roomList.length)].id : 'room_0';
 
     return {
       id: chosen.id,
