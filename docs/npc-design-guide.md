@@ -1,6 +1,6 @@
 ---
 
-# **NPC/Agent Design Document: Shadows of Blackwood Manor**
+# **NPC/Agent Design Document: Detective Agentic Mysteries**
 
 ## **1. CHARACTER DEFINITION STRUCTURE**
 

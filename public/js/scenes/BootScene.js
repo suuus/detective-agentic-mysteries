@@ -8,7 +8,7 @@ export default class BootScene extends Phaser.Scene {
 
   preload() {
     const { width, height } = this.cameras.main;
-    this.add.text(width/2, height/2 - 30, 'Shadows of Blackwood Manor', {
+    this.add.text(width/2, height/2 - 30, 'Detective Agentic Mysteries', {
       fontFamily: '"Playfair Display", Georgia, serif', fontSize: '24px', color: '#c9a84c'
     }).setOrigin(0.5);
     this.loadingText = this.add.text(width/2, height/2 + 10, 'Generating manor…', {

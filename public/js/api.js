@@ -1,5 +1,5 @@
 /**
- * GameAPI — backend communication for Shadows of Blackwood Manor.
+ * GameAPI — backend communication for Detective Agentic Mysteries.
  * All methods return parsed JSON unless streaming (talkTo).
  */
 export class GameAPI {

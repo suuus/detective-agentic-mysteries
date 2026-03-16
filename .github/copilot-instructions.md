@@ -1,4 +1,4 @@
-# Copilot Instructions for Shadows of Blackwood Manor
+# Copilot Instructions for Detective Agentic Mysteries
 
 ## Project Context
 

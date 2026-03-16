@@ -3,7 +3,7 @@
 # 🎮 DETECTIVE GAME: COMPLETE GAME MECHANICS, UI SYSTEMS & TECHNICAL ARCHITECTURE
 
 ## EXECUTIVE SUMMARY
-**Game**: Shadows of Blackwood Manor — a noir detective mystery
+**Game**: Detective Agentic Mysteries — a noir detective mystery
 - **Engine**: Phaser 3 (2D top-down)
 - **Backend**: Express + Copilot SDK (GPT-4 for NPC AI)
 - **Architecture**: Client-side UI layers (HTML/CSS/JS) + Phaser scenes + Express API

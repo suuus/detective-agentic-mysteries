@@ -1941,5 +1941,5 @@ app.post("/api/reset", async (_req, res) => {
 
 const PORT = 3000;
 app.listen(PORT, () => {
-  console.log(`🕵️  Shadows of Blackwood Manor server running on http://localhost:${PORT}`);
+  console.log(`🕵️  Detective Agentic Mysteries running on http://localhost:${PORT}`);
 });

@@ -1,4 +1,4 @@
-# Shadows of Blackwood Manor — Developer Instructions
+# Detective Agentic Mysteries — Developer Instructions
 
 ## What This Is
 
