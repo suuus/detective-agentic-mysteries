@@ -1,5 +1,7 @@
 # 🕵️ Detective Agentic Mysteries
 
+![Detective Agentic Mysteries](detective-banner.png)
+
 **A 2D AI-powered detective game where every NPC is an independent AI agent.**
 
 Built entirely with [GitHub Copilot CLI](https://docs.github.com/en/copilot), this project demonstrates how the Copilot SDK can orchestrate multiple AI agents — each with its own memory, personality, emotional state, and tools — into a cohesive, emergent experience. Every playthrough is unique because the AI agents make real decisions, not scripted ones.
