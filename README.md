@@ -8,6 +8,7 @@ Built entirely with [GitHub Copilot CLI](https://docs.github.com/en/copilot), th
 
 > **Why this matters:** The multi-agent architecture powering this game is the same pattern that platform engineers can use to orchestrate incidents, manage infrastructure, and automate complex workflows. See [Beyond Games: Platform Engineering Applications](#-beyond-games-platform-engineering-applications) below.
 
+ [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/suuus/detective-agentic-mysteries)
 ---
 
 ## 🎮 What You Get
