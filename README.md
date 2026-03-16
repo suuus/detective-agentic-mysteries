@@ -1,4 +1,4 @@
-# 🕵️ Shadows of Blackwood Manor
+# 🕵️ Detective Agentic Mysteries
 
 **A 2D AI-powered detective game where every NPC is an independent AI agent.**
 
@@ -10,7 +10,7 @@ Built entirely with [GitHub Copilot CLI](https://docs.github.com/en/copilot), th
 
 ## 🎮 What You Get
 
-- **5+ AI suspects** with unique personalities, secrets, alibis, and emotional states
+- **9+ AI suspects** with unique personalities, secrets, alibis, and emotional states
 - **An AI Director** that orchestrates the world between days — moving NPCs, planting evidence, escalating drama
 - **An AI Forensics Analyst** that provides scientific analysis of collected evidence
 - **An AI Narrator** that generates atmospheric noir prose in real-time
@@ -64,8 +64,8 @@ node --version  # Should be 18.x or higher
 
 ```bash
 # Clone the repo
-git clone https://github.com/your-username/shadows-of-blackwood-manor.git
-cd shadows-of-blackwood-manor
+git clone https://github.com/suuus/detective-agentic-mysteries.git
+cd detective-agentic-mysteries
 
 # Install dependencies
 npm install
@@ -81,7 +81,7 @@ The server starts on port 3000. The Copilot SDK client connects automatically an
 
 ```
 ✅ Copilot SDK client connected
-🕵️  Shadows of Blackwood Manor server running on http://localhost:3000
+🕵️  Detective Agentic Mysteries running on http://localhost:3000
 ```
 
 ---
