@@ -1867,11 +1867,14 @@ app.get("/api/red-herring/check", async (_req, res) => {
     return;
   }
 
-  // Unpredictable activation: eligible from Day 1 onward, but each check has a
-  // random chance of triggering. Probability increases with days and evidence.
-  // Day 1: ~15% per check (30s interval), Day 2: ~35%, Day 3+: ~60%
-  const baseChance = state.currentDay === 1 ? 0.15 : state.currentDay === 2 ? 0.35 : 0.6;
-  const evidenceBonus = Math.min(state.evidenceCollected.length * 0.05, 0.25);
+  // Unpredictable activation: eligible from Day 2 onward, probability increases with days and evidence.
+  // Day 1: never. Day 2: ~10% per check (30s interval). Day 3+: ~25%.
+  if (state.currentDay < 2) {
+    res.json({ shouldActivate: false, tooEarly: true });
+    return;
+  }
+  const baseChance = state.currentDay === 2 ? 0.10 : state.currentDay === 3 ? 0.25 : 0.40;
+  const evidenceBonus = Math.min(state.evidenceCollected.length * 0.03, 0.15);
   const shouldActivate = Math.random() < (baseChance + evidenceBonus);
 
   if (shouldActivate) {
