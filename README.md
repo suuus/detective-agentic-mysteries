@@ -62,6 +62,10 @@ node --version  # Should be 18.x or higher
 
 ## 🚀 Quick Start
 
+ [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/suuus/detective-agentic-mysteries)
+
+Open in a codespace and npm run dev, or install it locally per instructions below:
+
 ```bash
 # Clone the repo
 git clone https://github.com/suuus/detective-agentic-mysteries.git
