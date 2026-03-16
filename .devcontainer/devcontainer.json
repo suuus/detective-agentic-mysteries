@@ -1,7 +1,7 @@
 {
   "name": "Detective Agentic Mysteries",
   "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
-  "postCreateCommand": "npm install",
+  "postCreateCommand": "npm install && npm install -g @github/copilot",
   "forwardPorts": [3000],
   "customizations": {
     "vscode": {
