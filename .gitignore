@@ -11,3 +11,6 @@ build/
 .idea/
 *.swp
 *.swo
+
+# Personal notes
+linkedin-post.md

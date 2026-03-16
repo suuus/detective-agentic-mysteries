@@ -186,6 +186,52 @@ document.getElementById('btn-music').addEventListener('click', () => {
   document.getElementById('btn-music').classList.toggle('active', on);
 });
 
+// ── Model Settings ───────────────────────────────────────────────
+const settingsOverlay = document.getElementById('settings-overlay');
+const settingsModels = document.getElementById('settings-models');
+let cachedModels = null;
+const AGENT_LABELS = {
+  director: '🎬 Director (night orchestration)',
+  architect: '🏗️ Architect (mystery generation)',
+  forensics: '🔬 Forensics (evidence analysis)',
+};
+
+async function openModelSettings() {
+  if (!cachedModels) {
+    try {
+      cachedModels = await (await fetch('/api/models')).json();
+    } catch {
+      cachedModels = [{ id: 'gpt-4.1', name: 'GPT-4.1' }];
+    }
+  }
+  const res = await fetch('/api/settings/models');
+  const current = await res.json();
+  settingsModels.innerHTML = '';
+  for (const [agent, label] of Object.entries(AGENT_LABELS)) {
+    const row = document.createElement('div');
+    row.className = 'settings-row';
+    row.innerHTML = `<label>${label}</label><select data-agent="${agent}">
+      ${cachedModels.map(m => `<option value="${m.id}" ${current[agent] === m.id ? 'selected' : ''}>${m.name || m.id}</option>`).join('')}
+    </select>`;
+    row.querySelector('select').addEventListener('change', async (e) => {
+      await fetch('/api/settings/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent, model: e.target.value }),
+      });
+    });
+    settingsModels.appendChild(row);
+  }
+  settingsOverlay.classList.remove('hidden');
+}
+
+document.getElementById('btn-settings').addEventListener('click', openModelSettings);
+document.getElementById('btn-settings-menu').addEventListener('click', openModelSettings);
+
+document.getElementById('settings-close').addEventListener('click', () => {
+  settingsOverlay.classList.add('hidden');
+});
+
 // ── Accusation modal ────────────────────────────────────────────
 const accusationModal   = document.getElementById('accusation-modal');
 const suspectSelect     = document.getElementById('suspect-select');

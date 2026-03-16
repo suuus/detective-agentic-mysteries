@@ -96,6 +96,17 @@ const client = new CopilotClient();
 await client.start();
 console.log("✅ Copilot SDK client connected");
 
+// ── Model settings (user-configurable at runtime) ────────────────
+const DEFAULT_MODEL = "gpt-4.1";
+const modelSettings = {
+  npc: DEFAULT_MODEL,
+  director: DEFAULT_MODEL,
+  architect: DEFAULT_MODEL,
+  forensics: DEFAULT_MODEL,
+  narrator: DEFAULT_MODEL,
+  profiler: DEFAULT_MODEL,
+};
+
 const sessions = new Map<string, CopilotSession>();
 
 // ── NPC response tracking for contradiction detection ────────────
@@ -112,7 +123,7 @@ async function getForensicsSession(): Promise<CopilotSession> {
   try { await client.deleteSession("blackwood-forensics"); } catch {}
   forensicsSession = await client.createSession({
     sessionId: "blackwood-forensics",
-    model: "gpt-4.1",
+    model: modelSettings.forensics,
     streaming: true,
     tools: [],
     onPermissionRequest: approveAll,
@@ -144,7 +155,7 @@ async function getDirectorSession(): Promise<CopilotSession> {
 
   directorSession = await client.createSession({
     sessionId: "blackwood-director",
-    model: "gpt-4.1",
+    model: modelSettings.director,
     streaming: false,
     tools: directorTools,
     onPermissionRequest: approveAll,
@@ -167,7 +178,7 @@ async function getNarratorSession(): Promise<CopilotSession> {
   try { await client.deleteSession("blackwood-narrator"); } catch {}
   narratorSession = await client.createSession({
     sessionId: "blackwood-narrator",
-    model: "gpt-4.1",
+    model: modelSettings.narrator,
     streaming: false,
     tools: narratorTools,
     onPermissionRequest: approveAll,
@@ -201,7 +212,7 @@ async function getProfilerSession(): Promise<CopilotSession> {
   try { await client.deleteSession("blackwood-profiler"); } catch {}
   profilerSession = await client.createSession({
     sessionId: "blackwood-profiler",
-    model: "gpt-4.1",
+    model: modelSettings.profiler,
     streaming: false,
     tools: profilerTools,
     onPermissionRequest: approveAll,
@@ -433,7 +444,7 @@ async function recreateSession(characterId: string): Promise<CopilotSession> {
   console.log(`🔄 Recreating session for ${characterId}`);
   const session = await client.createSession({
     sessionId,
-    model: "gpt-4.1",
+    model: modelSettings.npc,
     streaming: true,
     tools: gameTools,
     onPermissionRequest: approveAll,
@@ -458,7 +469,7 @@ async function getOrCreateSession(characterId: string): Promise<CopilotSession> 
 
   const session = await client.createSession({
     sessionId,
-    model: "gpt-4.1",
+    model: modelSettings.npc,
     streaming: true,
     tools: gameTools,
     onPermissionRequest: approveAll,
@@ -1082,7 +1093,7 @@ app.post("/api/mystery/generate", async (_req, res) => {
 
     const architect = await client.createSession({
       sessionId: "blackwood-architect",
-      model: "gpt-4.1",
+      model: modelSettings.architect,
       streaming: false,
       tools: [],
       onPermissionRequest: approveAll,
@@ -1829,7 +1840,7 @@ app.post("/api/red-herring/activate", async (req, res) => {
   try {
     redHerringSession = await client.createSession({
       sessionId,
-      model: "gpt-4.1",
+      model: modelSettings.npc,
       streaming: true,
       tools: gameTools,
       onPermissionRequest: approveAll,
@@ -1873,7 +1884,7 @@ app.get("/api/red-herring/check", async (_req, res) => {
       try {
         redHerringSession = await client.createSession({
           sessionId,
-          model: "gpt-4.1",
+          model: modelSettings.npc,
           streaming: true,
           tools: gameTools,
           onPermissionRequest: approveAll,
@@ -1937,6 +1948,36 @@ app.post("/api/reset", async (_req, res) => {
   console.log("🧹 Full reset: all sessions cleared and deleted");
   gameState.reset();
   res.json({ reset: true });
+});
+
+// ── Model Settings ──────────────────────────────────────────────
+app.get("/api/settings/models", (_req, res) => {
+  res.json(modelSettings);
+});
+
+app.post("/api/settings/models", (req, res) => {
+  const { agent, model } = req.body;
+  if (!agent || !model) {
+    res.status(400).json({ error: "agent and model are required" });
+    return;
+  }
+  if (!(agent in modelSettings)) {
+    res.status(400).json({ error: `Unknown agent: ${agent}. Valid: ${Object.keys(modelSettings).join(", ")}` });
+    return;
+  }
+  (modelSettings as any)[agent] = model;
+  console.log(`⚙️  Model for ${agent} changed to ${model}`);
+  res.json({ updated: agent, model, note: "Takes effect on next session creation (new game or session reconnect)" });
+});
+
+app.get("/api/models", async (_req, res) => {
+  try {
+    const models = await client.listModels();
+    res.json(models.map(m => ({ id: m.id, name: m.name })));
+  } catch (err: any) {
+    console.error("Failed to list models:", err.message);
+    res.status(500).json({ error: "Failed to list models" });
+  }
 });
 
 const PORT = 3000;

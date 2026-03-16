@@ -724,3 +724,27 @@ body {
   font-weight: bold;
   z-index: 1001;
 }
+
+/* ── Model Settings ── */
+.settings-panel {
+  background: var(--panel-bg, #1a1a2e);
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+  padding: 24px;
+  max-width: 480px;
+  margin: 60px auto;
+  color: var(--text, #ddd);
+  font-family: var(--font-body, sans-serif);
+}
+.settings-panel h2 { margin: 0 0 8px; color: var(--accent, #c9a84c); }
+.settings-note { font-size: 12px; opacity: 0.6; margin-bottom: 16px; }
+.settings-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.settings-row label { font-size: 13px; flex: 1; }
+.settings-row select {
+  background: #111; color: #ddd; border: 1px solid #444;
+  border-radius: 4px; padding: 4px 8px; font-size: 12px;
+}
+.settings-actions { margin-top: 16px; text-align: right; }
