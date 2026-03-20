@@ -2,7 +2,7 @@ import { defineTool } from "@github/copilot-sdk";
 import type { GameStateManager, NightConversationPair, NPCSchedule, Evidence } from "./gameState.js";
 
 // Room coordinates for all levels — merged at runtime
-const MANOR_POSITIONS: Record<string, { x: [number,number], y: [number,number] }> = {
+const MANOR_POSITIONS: Record<string, { x: [number,number], y: [number,number], floor?: number }> = {
   study:        { x: [3,8],   y: [14,17] },
   library:      { x: [27,32], y: [14,17] },
   kitchen:      { x: [3,8],   y: [3,8]   },
@@ -12,9 +12,15 @@ const MANOR_POSITIONS: Record<string, { x: [number,number], y: [number,number] }
   garden:       { x: [14,21], y: [23,28] },
   foyer:        { x: [14,21], y: [3,8]   },
   main_hall:    { x: [14,21], y: [14,17] },
+  // Upper floor rooms (floor: 1)
+  upper_bedroom:  { x: [27,32], y: [23,28], floor: 1 },
+  upper_study:    { x: [3,8],   y: [14,17], floor: 1 },
+  upper_hall:     { x: [14,21], y: [14,17], floor: 1 },
+  guest_bedroom:  { x: [3,8],   y: [3,8],   floor: 1 },
+  balcony:        { x: [14,21], y: [3,8],   floor: 1 },
 };
 
-const CRUISE_POSITIONS: Record<string, { x: [number,number], y: [number,number] }> = {
+const CRUISE_POSITIONS: Record<string, { x: [number,number], y: [number,number], floor?: number }> = {
   bridge:           { x: [3,8],   y: [3,8]   },
   observation_deck: { x: [14,21], y: [3,8]   },
   penthouse:        { x: [27,32], y: [3,8]   },
@@ -29,7 +35,7 @@ const CRUISE_POSITIONS: Record<string, { x: [number,number], y: [number,number] 
   security_office:  { x: [27,32], y: [33,38] },
 };
 
-export const ALL_ROOM_POSITIONS: Record<string, { x: [number,number], y: [number,number] }> = {
+export const ALL_ROOM_POSITIONS: Record<string, { x: [number,number], y: [number,number], floor?: number }> = {
   ...MANOR_POSITIONS,
   ...CRUISE_POSITIONS,
 };
@@ -85,7 +91,10 @@ When night falls, you must decide:
 - React to the detective's progress. If they're close to solving it, Hartwell should get desperate. If they're far off, drop more breadcrumbs.
 - Keep it believable. Characters act on their motivations, not random chance.
 - New evidence should have id format like: day{N}_{description} (e.g., "day2_burnt_papers")
-- For NPC positions, use room names from this list: study, library, kitchen, dining_room, conservatory, bedroom, garden, foyer, main_hall
+- For NPC positions, use room names from this list:
+  Ground floor: study, library, kitchen, dining_room, conservatory, bedroom, garden, foyer, main_hall
+  Upper floor: upper_bedroom, upper_study, upper_hall, guest_bedroom, balcony
+  NPCs can be on any floor. Use upper floor rooms when characters want privacy or to hide.
 
 === ADAPTIVE DIFFICULTY ===
 The game reports a stuckLevel (0-3) in the game state:
@@ -117,6 +126,8 @@ export function createDirectorTools(gameState: GameStateManager) {
         charactersInterrogated: state.charactersInterrogated,
         accusationsMade: state.accusationsMade,
         currentNPCPositions: dayConfig.npcPositions,
+        npcFloors: gameState.getNPCFloors(),
+        playerFloor: gameState.getPlayerFloor(),
         npcSentiments: gameState.getAllSentiments(),
         playerProgress: gameState.getPlayerProgress(),
         previousNightConversations: gameState.getLastNightConversations().map(c => ({
@@ -180,8 +191,9 @@ export function createDirectorTools(gameState: GameStateManager) {
             type: "object",
             properties: {
               id: { type: "string", description: "Character ID" },
-              room: { type: "string", description: "Room name (study, library, kitchen, dining_room, conservatory, bedroom, garden, foyer, main_hall)" },
+              room: { type: "string", description: "Room name (ground: study, library, kitchen, dining_room, conservatory, bedroom, garden, foyer, main_hall; upper: upper_bedroom, upper_study, upper_hall, guest_bedroom, balcony)" },
               reason: { type: "string", description: "Brief reason why they're here (for your records)" },
+              floor: { type: "number", description: "Floor number: 0 = ground (default), 1 = upper floor. Upper floor rooms require floor: 1." },
             },
             required: ["id", "room"],
           },
@@ -250,7 +262,10 @@ export function createDirectorTools(gameState: GameStateManager) {
 
         // Look up character name — use the ID capitalized as fallback
         const name = pos.id.charAt(0).toUpperCase() + pos.id.slice(1);
-        npcPositions.push({ id: pos.id, name, location: pos.room, x, y });
+        const floor = pos.floor ?? roomBounds.floor ?? 0;
+        npcPositions.push({ id: pos.id, name, location: pos.room, x, y, floor });
+        // Update NPC floor tracking
+        gameState.setNPCFloor(pos.id, floor);
       }
 
       // Register positions for new evidence items
@@ -259,7 +274,7 @@ export function createDirectorTools(gameState: GameStateManager) {
         if (roomBounds) {
           const x = Math.floor((roomBounds.x[0] + roomBounds.x[1]) / 2);
           const y = Math.floor((roomBounds.y[0] + roomBounds.y[1]) / 2);
-          gameState.registerEvidencePosition(ev.id, x, y);
+          gameState.registerEvidencePosition(ev.id, x, y, roomBounds.floor);
         }
       }
 
@@ -269,7 +284,7 @@ export function createDirectorTools(gameState: GameStateManager) {
         if (roomBounds) {
           const x = Math.floor((roomBounds.x[0] + roomBounds.x[1]) / 2);
           const y = Math.floor((roomBounds.y[0] + roomBounds.y[1]) / 2);
-          gameState.registerEvidencePosition(moved.id, x, y);
+          gameState.registerEvidencePosition(moved.id, x, y, roomBounds.floor);
         }
       }
 

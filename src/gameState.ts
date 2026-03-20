@@ -47,6 +47,9 @@ export interface GameState {
   tamperedEvidence: string[];
   // Notebook clues — auto-populated from NPC reveals and key events
   notebookClues: { source: string; text: string; day: number }[];
+  // Multi-floor tracking
+  playerFloor: number;  // 0 = ground (default), 1 = upper, -1 = basement
+  npcFloors: Record<string, number>;  // characterId -> floor number
 }
 
 export interface Evidence {
@@ -63,6 +66,7 @@ export interface NPCSchedule {
   location: string;
   x: number;
   y: number;
+  floor?: number;  // 0 = ground (default), 1 = upper, -1 = basement
 }
 
 export interface DayConfig {
@@ -185,7 +189,7 @@ const MOTIVE_KEYWORDS = [
   "forged",
 ];
 
-export const EVIDENCE_POSITIONS: Record<string, { x: number; y: number }> = {
+export const EVIDENCE_POSITIONS: Record<string, { x: number; y: number; floor?: number }> = {
   brandy_glass: { x: 5, y: 15 },
   prescription_pad: { x: 29, y: 15 },
   foxglove_cuttings: { x: 18, y: 25 },
@@ -193,7 +197,7 @@ export const EVIDENCE_POSITIONS: Record<string, { x: number; y: number }> = {
   love_letter: { x: 6, y: 24 },
   business_documents: { x: 4, y: 17 },
   agnes_diary: { x: 5, y: 7 },
-  claras_manuscript: { x: 31, y: 27 },
+  claras_manuscript: { x: 31, y: 27, floor: 1 },  // Clara's manuscript is upstairs
   burnt_note: { x: 18, y: 27 },
   muddy_footprints: { x: 6, y: 16 },
   digitalis_vial: { x: 19, y: 6 },
@@ -202,7 +206,7 @@ export const EVIDENCE_POSITIONS: Record<string, { x: number; y: number }> = {
 
 // Preserve originals so reset() can restore after cruise/random overwrites them
 const MANOR_EVIDENCE: Evidence[] = [...EVIDENCE];
-const MANOR_EVIDENCE_POSITIONS: Record<string, { x: number; y: number }> = { ...EVIDENCE_POSITIONS };
+const MANOR_EVIDENCE_POSITIONS: Record<string, { x: number; y: number; floor?: number }> = { ...EVIDENCE_POSITIONS };
 
 // Night conversation pairs — who meets whom, and the scenario prompt
 const NIGHT_CONVERSATION_PAIRS: NightConversationPair[][] = [
@@ -240,7 +244,7 @@ const DAY_CONFIGS: DayConfig[] = [
     npcPositions: [
       { id: "victoria", name: "Victoria", location: "conservatory", x: 6, y: 25 },
       { id: "hartwell", name: "Hartwell", location: "library", x: 30, y: 16 },
-      { id: "clara", name: "Clara", location: "bedroom", x: 30, y: 26 },
+      { id: "clara", name: "Clara", location: "upper_bedroom", x: 30, y: 26, floor: 1 },
       { id: "price", name: "Price", location: "dining_room", x: 30, y: 4 },
       { id: "agnes", name: "Agnes", location: "kitchen", x: 6, y: 5 },
     ],
@@ -291,7 +295,7 @@ const DAY_CONFIGS: DayConfig[] = [
   // Day 3
   {
     npcPositions: [
-      { id: "victoria", name: "Victoria", location: "bedroom", x: 29, y: 26 },
+      { id: "victoria", name: "Victoria", location: "upper_bedroom", x: 29, y: 26, floor: 1 },
       { id: "hartwell", name: "Hartwell", location: "garden", x: 16, y: 23 },
       { id: "clara", name: "Clara", location: "kitchen", x: 4, y: 8 },
       { id: "price", name: "Price", location: "library", x: 29, y: 15 },
@@ -380,6 +384,14 @@ export class GameStateManager {
       alliances: [],
       tamperedEvidence: [],
       notebookClues: [],
+      playerFloor: 0,
+      npcFloors: {
+        victoria: 0,
+        hartwell: 0,
+        clara: 1,    // Clara starts upstairs in her bedroom
+        price: 0,
+        agnes: 0,
+      },
     };
   }
 
@@ -547,6 +559,11 @@ export class GameStateManager {
       }
     }
 
+    // Sync NPC floor positions from day config
+    for (const npcPos of config.npcPositions) {
+      this.state.npcFloors[npcPos.id] = npcPos.floor ?? 0;
+    }
+
     return { dayConfig: config, removedEvidence: actuallyRemoved };
   }
 
@@ -618,27 +635,27 @@ export class GameStateManager {
     return all.filter((e) => !this.state.removedEvidence.includes(e.id));
   }
 
-  getEvidencePositions(): { id: string; x: number; y: number }[] {
+  getEvidencePositions(): { id: string; x: number; y: number; floor?: number }[] {
     const active = this.getActiveEvidence();
-    const positions: { id: string; x: number; y: number }[] = [];
+    const positions: { id: string; x: number; y: number; floor?: number }[] = [];
 
     for (const ev of active) {
       if (this.state.evidenceCollected.includes(ev.id)) continue;
       const pos = EVIDENCE_POSITIONS[ev.id];
       if (pos) {
-        positions.push({ id: ev.id, x: pos.x, y: pos.y });
+        positions.push({ id: ev.id, x: pos.x, y: pos.y, ...(pos.floor !== undefined ? { floor: pos.floor } : {}) });
       }
     }
 
     return positions;
   }
 
-  addDynamicEvidence(evidence: Evidence, position?: { x: number; y: number }): void {
+  addDynamicEvidence(evidence: Evidence, position?: { x: number; y: number; floor?: number }): void {
     if (!EVIDENCE.find(e => e.id === evidence.id)) {
       EVIDENCE.push(evidence);
     }
     if (position) {
-      EVIDENCE_POSITIONS[evidence.id] = position;
+      EVIDENCE_POSITIONS[evidence.id] = { x: position.x, y: position.y, ...(position.floor !== undefined ? { floor: position.floor } : {}) };
     } else {
       // Auto-calculate position from room bounds
       const roomBounds: Record<string, {x:[number,number],y:[number,number]}> = {
@@ -849,8 +866,33 @@ export class GameStateManager {
     this.directorPlan = null;
   }
 
-  registerEvidencePosition(id: string, x: number, y: number): void {
-    EVIDENCE_POSITIONS[id] = { x, y };
+  registerEvidencePosition(id: string, x: number, y: number, floor?: number): void {
+    EVIDENCE_POSITIONS[id] = { x, y, ...(floor !== undefined ? { floor } : {}) };
+  }
+
+  // ── Floor System ─────────────────────────────────────────────
+  getPlayerFloor(): number {
+    return this.state.playerFloor;
+  }
+
+  setPlayerFloor(floor: number): void {
+    this.state.playerFloor = floor;
+  }
+
+  getNPCFloor(characterId: string): number {
+    return this.state.npcFloors[characterId] ?? 0;
+  }
+
+  setNPCFloor(characterId: string, floor: number): void {
+    this.state.npcFloors[characterId] = floor;
+  }
+
+  getNPCFloors(): Record<string, number> {
+    return { ...this.state.npcFloors };
+  }
+
+  areOnSameFloor(entity1Floor: number, entity2Floor: number): boolean {
+    return entity1Floor === entity2Floor;
   }
 
   getSentiment(characterId: string): NPCSentiment | undefined {
@@ -960,7 +1002,7 @@ export class GameStateManager {
 
   loadLevelConfig(config: {
     evidence: Evidence[];
-    evidencePositions: Record<string, { x: number; y: number }>;
+    evidencePositions: Record<string, { x: number; y: number; floor?: number }>;
     correctSuspect: string;
     keyEvidence: string[];
     motiveKeywords: string[];

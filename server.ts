@@ -258,11 +258,18 @@ async function spreadGossip(interrogatedId: string, playerMessage: string): Prom
   const interrogatedChar = getActiveCharacters().find((c: any) => c.id === interrogatedId);
   if (!interrogatedChar) return;
 
+  // Only spread gossip to NPCs on the same floor as the player
+  const playerFloor = gameState.getPlayerFloor();
+
   for (const [otherId, session] of sessions) {
     if (otherId === interrogatedId) continue;
 
     const otherChar = getActiveCharacters().find((c: any) => c.id === otherId);
     if (!otherChar) continue;
+
+    // Floor-aware gossip: only NPCs on the same floor overhear
+    const otherFloor = gameState.getNPCFloor(otherId);
+    if (otherFloor !== playerFloor) continue;
 
     try {
       await session.sendAndWait({
@@ -370,25 +377,26 @@ function createNPCHooks() {
     onPostToolUse: async (input: any, invocation: { sessionId: string }) => {
       const characterId = invocation.sessionId.replace('blackwood-', '');
       const charName = getActiveCharacters().find((c: any) => c.id === characterId)?.name ?? characterId;
+      const charFloor = gameState.getNPCFloor(characterId);
 
       switch (input.toolName) {
         case 'update_sentiment': {
-          // Broadcast significant emotional shifts to nearby NPCs
+          // Broadcast significant emotional shifts to nearby NPCs on the same floor
           const emotion = input.toolArgs?.emotional_state;
           if (emotion === 'desperate' || emotion === 'hostile' || emotion === 'scared') {
             const summary = `${charName} appears visibly ${emotion}`;
             for (const npc of getActiveCharacters()) {
-              if (npc.id !== characterId && Math.random() < 0.4) {
+              if (npc.id !== characterId && gameState.getNPCFloor(npc.id) === charFloor && Math.random() < 0.4) {
                 gameState.addEavesdrop(npc.id, summary);
               }
             }
-            console.log(`🎭 Hook: ${charName}'s emotional shift (${emotion}) noticed by nearby NPCs`);
+            console.log(`🎭 Hook: ${charName}'s emotional shift (${emotion}) noticed by NPCs on floor ${charFloor}`);
           }
           break;
         }
 
         case 'reveal_clue': {
-          // When an NPC reveals a clue, nearby NPCs may overhear
+          // When an NPC reveals a clue, nearby NPCs on the same floor may overhear
           const clue = input.toolArgs?.clue;
           if (clue) {
             const importance = input.toolArgs?.importance ?? 'medium';
@@ -396,7 +404,7 @@ function createNPCHooks() {
             const chance = importance === 'high' ? 0.5 : importance === 'medium' ? 0.3 : 0.1;
             const snippet = typeof clue === 'string' ? clue.slice(0, 80) : '';
             for (const npc of getActiveCharacters()) {
-              if (npc.id !== characterId && Math.random() < chance) {
+              if (npc.id !== characterId && gameState.getNPCFloor(npc.id) === charFloor && Math.random() < chance) {
                 gameState.addEavesdrop(npc.id, `Overheard ${charName} mention: "${snippet}..."`);
               }
             }
@@ -417,11 +425,11 @@ function createNPCHooks() {
         }
 
         case 'show_body_language': {
-          // Visible body language is noticed by nearby NPCs
+          // Visible body language is noticed by nearby NPCs on the same floor
           const action = input.toolArgs?.action;
           if (action) {
             for (const npc of getActiveCharacters()) {
-              if (npc.id !== characterId && Math.random() < 0.25) {
+              if (npc.id !== characterId && gameState.getNPCFloor(npc.id) === charFloor && Math.random() < 0.25) {
                 gameState.addEavesdrop(npc.id, `Noticed ${charName} ${action}`);
               }
             }
@@ -808,6 +816,24 @@ app.get("/api/state", (_req, res) => {
   res.json(gameState.getState());
 });
 
+// Floor tracking
+app.get("/api/floor", (_req, res) => {
+  res.json({
+    playerFloor: gameState.getPlayerFloor(),
+    npcFloors: gameState.getNPCFloors(),
+  });
+});
+
+app.post("/api/floor", (req, res) => {
+  const { floor } = req.body;
+  if (typeof floor !== 'number' || floor < -1 || floor > 1) {
+    res.status(400).json({ error: "Invalid floor. Use -1 (basement), 0 (ground), or 1 (upper)." });
+    return;
+  }
+  gameState.setPlayerFloor(floor);
+  res.json({ floor, npcFloors: gameState.getNPCFloors() });
+});
+
 // NPC sentiment
 app.get("/api/sentiments", (_req, res) => {
   res.json(gameState.getAllSentiments());
@@ -1072,6 +1098,8 @@ app.get("/api/day", (_req, res) => {
     currentDay: gameState.getCurrentDay(),
     timeOfDay: gameState.getTimeOfDay(),
     dayConfig: gameState.getDayConfig(),
+    playerFloor: gameState.getPlayerFloor(),
+    npcFloors: gameState.getNPCFloors(),
   });
 });
 
