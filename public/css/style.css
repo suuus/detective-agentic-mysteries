@@ -800,3 +800,39 @@ body {
   border-radius: 4px; padding: 4px 8px; font-size: 12px;
 }
 .settings-actions { margin-top: 16px; text-align: right; }
+
+/* ── Audio settings ── */
+.settings-section-header {
+  font-size: 11px; font-weight: bold; text-transform: uppercase;
+  letter-spacing: 1px; color: var(--gold, #c9a84c); opacity: 0.7;
+  margin: 16px 0 6px; padding-bottom: 4px;
+  border-bottom: 1px solid rgba(201, 168, 76, 0.2);
+}
+.settings-section-header:first-child { margin-top: 0; }
+.settings-slider {
+  -webkit-appearance: none; appearance: none;
+  width: 100px; height: 4px; border-radius: 2px;
+  background: #333; outline: none; margin: 0 8px;
+}
+.settings-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--gold, #c9a84c); cursor: pointer;
+}
+.settings-slider::-moz-range-thumb {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--gold, #c9a84c); cursor: pointer; border: none;
+}
+.settings-slider-label {
+  font-size: 11px; min-width: 32px; text-align: right; opacity: 0.6;
+}
+.settings-toggle {
+  background: #222; color: #888; border: 1px solid #444;
+  border-radius: 4px; padding: 3px 12px; font-size: 11px;
+  cursor: pointer; transition: all 0.2s;
+  min-width: 42px; text-align: center;
+}
+.settings-toggle.active {
+  background: rgba(201, 168, 76, 0.2); color: var(--gold, #c9a84c);
+  border-color: var(--gold, #c9a84c);
+}

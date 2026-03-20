@@ -16,7 +16,7 @@ import { toggleFlashlight } from './lighting.js';
 import RandomBootScene from './scenes/RandomBootScene.js';
 import RandomManorScene from './scenes/RandomManorScene.js';
 import { playReconstruction } from './reconstruction.js';
-import { initAmbientMusic, toggleMusic, setMood, isMusicEnabled } from './ambientMusic.js';
+import { initAmbientMusic, toggleMusic, setMood, isMusicEnabled, playSting, updateTension, setMasterVolume, getMasterVolume, toggleSfx, isSfxEnabled } from './ambientMusic.js';
 import { initVoiceInput } from './voiceInput.js';
 
 // ── Managers ─────────────────────────────────────────────────────
@@ -43,6 +43,8 @@ dialog.setVoiceInput(voiceInput);
 // ── Ambient Music ────────────────────────────────────────────────
 initAmbientMusic();
 window.setMusicMood = setMood;
+window.playSting = playSting;
+window.updateMusicTension = updateTension;
 
 // ── Phaser config ────────────────────────────────────────────────
 const config = {
@@ -215,6 +217,56 @@ async function openModelSettings() {
   const langData = await langRes.json();
   settingsModels.innerHTML = '';
 
+  // ── Audio settings ──
+  const audioHeader = document.createElement('div');
+  audioHeader.className = 'settings-section-header';
+  audioHeader.textContent = '🎵 Audio';
+  settingsModels.appendChild(audioHeader);
+
+  // Master volume slider
+  const volRow = document.createElement('div');
+  volRow.className = 'settings-row';
+  volRow.innerHTML = `<label>🔊 Master Volume</label>
+    <input type="range" id="vol-slider" min="0" max="100" value="${Math.round(getMasterVolume() * 100)}" class="settings-slider">
+    <span id="vol-label" class="settings-slider-label">${Math.round(getMasterVolume() * 100)}%</span>`;
+  volRow.querySelector('#vol-slider').addEventListener('input', (e) => {
+    const vol = parseInt(e.target.value, 10) / 100;
+    setMasterVolume(vol);
+    document.getElementById('vol-label').textContent = `${e.target.value}%`;
+  });
+  settingsModels.appendChild(volRow);
+
+  // Music toggle
+  const musicRow = document.createElement('div');
+  musicRow.className = 'settings-row';
+  musicRow.innerHTML = `<label>🎶 Background Music</label>
+    <button id="music-toggle-btn" class="settings-toggle ${isMusicEnabled() ? 'active' : ''}">${isMusicEnabled() ? 'ON' : 'OFF'}</button>`;
+  musicRow.querySelector('#music-toggle-btn').addEventListener('click', (e) => {
+    const on = toggleMusic();
+    e.target.textContent = on ? 'ON' : 'OFF';
+    e.target.classList.toggle('active', on);
+    document.getElementById('btn-music').classList.toggle('active', on);
+  });
+  settingsModels.appendChild(musicRow);
+
+  // SFX toggle
+  const sfxRow = document.createElement('div');
+  sfxRow.className = 'settings-row';
+  sfxRow.innerHTML = `<label>🔔 Sound Effects</label>
+    <button id="sfx-toggle-btn" class="settings-toggle ${isSfxEnabled() ? 'active' : ''}">${isSfxEnabled() ? 'ON' : 'OFF'}</button>`;
+  sfxRow.querySelector('#sfx-toggle-btn').addEventListener('click', (e) => {
+    const on = toggleSfx();
+    e.target.textContent = on ? 'ON' : 'OFF';
+    e.target.classList.toggle('active', on);
+  });
+  settingsModels.appendChild(sfxRow);
+
+  // ── Separator ──
+  const sep = document.createElement('div');
+  sep.className = 'settings-section-header';
+  sep.textContent = '🌍 Language & AI';
+  settingsModels.appendChild(sep);
+
   // Language setting
   const LANGUAGES = ['English', 'French', 'Spanish', 'German', 'Italian', 'Portuguese', 'Dutch', 'Japanese', 'Korean', 'Chinese'];
   const langRow = document.createElement('div');
@@ -364,6 +416,7 @@ submitBtn.addEventListener('click', async () => {
     if (result.correct) {
       resultEl.className = 'accusation-result correct';
       resultEl.textContent = result.message ?? 'Correct! Case solved.';
+      playSting('solved');
       window.dispatchEvent(new CustomEvent('correct-accusation'));
       // Show win screen after a brief pause
       setTimeout(() => {

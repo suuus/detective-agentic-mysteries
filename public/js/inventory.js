@@ -125,7 +125,12 @@ export class InventoryManager {
     try {
       const data = await (await fetch('/api/notebook')).json();
       this.clues = (data.clues || []).map(c => ({ icon: '📝', name: c.source, desc: c.text, day: c.day }));
+      const prev = this.contradictions.length;
       this.contradictions = data.contradictions || [];
+      // Play sting if new contradictions were detected
+      if (this.contradictions.length > prev) {
+        window.playSting?.('contradiction');
+      }
       this.renderNotebook();
     } catch (err) {
       console.warn('Failed to load notebook:', err);
