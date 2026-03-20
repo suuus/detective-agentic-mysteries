@@ -31,36 +31,66 @@ export default class ManorScene extends Phaser.Scene {
     this._eWasDown = false;
     this._crimeSceneSeen = false;
 
-    // Room definitions (tile coords)
+    // Multi-floor system
+    this.currentFloor = 0; // 0 = ground, 1 = upper
+    this._floorTransitioning = false;
+    this._floorObjects = { 0: [], 1: [] }; // Track objects per floor
+    this._floorWalls = { 0: [], 1: [] };   // Track wall physics per floor
+    this._floorFurniture = { 0: [], 1: [] }; // Track furniture physics per floor
+    this._npcFloors = {}; // Track NPC floor assignments
+
+    // Ground floor room definitions (tile coords)
     this.rooms = {
-      main_hall:   { name:'Main Hall',       x:12, y:12, w:12, h:8,  floor:'tile_carpet' },
-      study:       { name:'Study',           x:1,  y:12, w:10, h:8,  floor:'tile_carpet' },
-      library:     { name:'Library',         x:25, y:12, w:10, h:8,  floor:'tile_carpet' },
-      kitchen:     { name:'Kitchen',         x:1,  y:1,  w:10, h:10, floor:'tile_kitchen_floor' },
-      dining_room: { name:'Dining Room',     x:25, y:1,  w:10, h:10, floor:'tile_floor' },
-      conservatory:{ name:'Conservatory',    x:1,  y:21, w:10, h:10, floor:'tile_floor' },
-      bedroom:     { name:"Clara's Bedroom", x:25, y:21, w:10, h:10, floor:'tile_carpet' },
-      garden:      { name:'Garden',          x:12, y:21, w:12, h:10, floor:'tile_grass' },
-      foyer:       { name:'Foyer',           x:12, y:1,  w:12, h:10, floor:'tile_floor' },
+      main_hall:   { name:'Main Hall',       x:12, y:12, w:12, h:8,  floor:'tile_carpet', floorNum: 0 },
+      study:       { name:'Study',           x:1,  y:12, w:10, h:8,  floor:'tile_carpet', floorNum: 0 },
+      library:     { name:'Library',         x:25, y:12, w:10, h:8,  floor:'tile_carpet', floorNum: 0 },
+      kitchen:     { name:'Kitchen',         x:1,  y:1,  w:10, h:10, floor:'tile_kitchen_floor', floorNum: 0 },
+      dining_room: { name:'Dining Room',     x:25, y:1,  w:10, h:10, floor:'tile_floor', floorNum: 0 },
+      conservatory:{ name:'Conservatory',    x:1,  y:21, w:10, h:10, floor:'tile_floor', floorNum: 0 },
+      bedroom:     { name:"Servants' Quarters", x:25, y:21, w:10, h:10, floor:'tile_carpet', floorNum: 0 },
+      garden:      { name:'Garden',          x:12, y:21, w:12, h:10, floor:'tile_grass', floorNum: 0 },
+      foyer:       { name:'Foyer',           x:12, y:1,  w:12, h:10, floor:'tile_floor', floorNum: 0 },
+      // Upper floor rooms (reuse same tile coordinate space)
+      upper_hall:     { name:'Upper Landing', x:12, y:12, w:12, h:8,  floor:'tile_upper_floor', floorNum: 1 },
+      upper_study:    { name:'Lord\'s Study', x:1,  y:12, w:10, h:8,  floor:'tile_carpet', floorNum: 1 },
+      upper_bedroom:  { name:'Master Bedroom',x:25, y:21, w:10, h:10, floor:'tile_carpet', floorNum: 1 },
+      guest_bedroom:  { name:'Guest Bedroom', x:1,  y:1,  w:10, h:10, floor:'tile_carpet', floorNum: 1 },
+      balcony:        { name:'Balcony',       x:12, y:1,  w:12, h:10, floor:'tile_floor', floorNum: 1 },
     };
 
-    // Doorways — must span both room border walls + the gap between rooms
-    this.doors = [
-      { x:17, y:10, w:2, h:4 }, // foyer <-> main hall (vertical)
-      { x:10, y:15, w:4, h:2 }, // study <-> main hall (horizontal)
-      { x:23, y:15, w:4, h:2 }, // main hall <-> library (horizontal)
-      { x:10, y:5,  w:4, h:2 }, // kitchen <-> foyer (horizontal)
-      { x:23, y:5,  w:4, h:2 }, // foyer <-> dining room (horizontal)
-      { x:17, y:19, w:2, h:4 }, // main hall <-> garden (vertical)
-      { x:10, y:25, w:4, h:2 }, // conservatory <-> garden (horizontal)
-      { x:23, y:25, w:4, h:2 }, // garden <-> bedroom (horizontal)
+    // Doorways per floor
+    this.doors = {
+      0: [
+        { x:17, y:10, w:2, h:4 }, // foyer <-> main hall (vertical)
+        { x:10, y:15, w:4, h:2 }, // study <-> main hall (horizontal)
+        { x:23, y:15, w:4, h:2 }, // main hall <-> library (horizontal)
+        { x:10, y:5,  w:4, h:2 }, // kitchen <-> foyer (horizontal)
+        { x:23, y:5,  w:4, h:2 }, // foyer <-> dining room (horizontal)
+        { x:17, y:19, w:2, h:4 }, // main hall <-> garden (vertical)
+        { x:10, y:25, w:4, h:2 }, // conservatory <-> garden (horizontal)
+        { x:23, y:25, w:4, h:2 }, // garden <-> bedroom (horizontal)
+      ],
+      1: [
+        { x:17, y:10, w:2, h:4 }, // balcony <-> upper hall (vertical)
+        { x:10, y:15, w:4, h:2 }, // upper study <-> upper hall (horizontal)
+        { x:23, y:25, w:4, h:2 }, // upper hall area <-> master bedroom (horizontal)
+        { x:10, y:5,  w:4, h:2 }, // guest bedroom <-> balcony (horizontal)
+      ],
+    };
+
+    // Staircase definitions — where stairs are on each floor
+    this.stairs = [
+      { x: 24, y: 14, w: 2, h: 2, fromFloor: 0, toFloor: 1, exitX: 24, exitY: 14 },
+      { x: 24, y: 14, w: 2, h: 2, fromFloor: 1, toFloor: 0, exitX: 24, exitY: 14 },
     ];
 
     this.MAP_W = 36;
     this.MAP_H = 32;
 
-    this._buildFloors(T);
-    this._buildWalls(T);
+    // Build both floors
+    this._buildFloorLevel(0, T);
+    this._buildFloorLevel(1, T);
+    this._placeStairs(T);
     this._placeCrimeScene(T);
     this._placeFurniture(T);
     this._placeNPCs(T);
@@ -71,6 +101,9 @@ export default class ManorScene extends Phaser.Scene {
     this._setupInput();
     initNPCApproach(this);
     this._createAmbientParticles();
+
+    // Show only ground floor initially
+    this._showFloor(0);
 
     // Weather effects (noir fog by default)
     createWeatherTextures(this);
@@ -182,6 +215,14 @@ export default class ManorScene extends Phaser.Scene {
       this._updateClock(0);
       if (this.isNight) {
         this.nightOverlay.setAlpha(0.6);
+      }
+      // Sync NPC floor positions
+      if (data.npcFloors) {
+        for (const [id, floor] of Object.entries(data.npcFloors)) {
+          this._npcFloors[id] = floor;
+          if (this.npcs[id]) this.npcs[id].setData('floor', floor);
+        }
+        this._showFloor(this.currentFloor);
       }
       // Check for mid-game reveals
       this._checkHiddenRoom();
@@ -317,11 +358,16 @@ export default class ManorScene extends Phaser.Scene {
     if (!dayConfig) return;
     const T = this.T;
 
-    // Reposition NPCs — offset any that would overlap
+    // Reposition NPCs — offset any that would overlap, update floor tracking
     const usedPositions = [];
     for (const npcPos of dayConfig.npcPositions) {
       const sprite = this.npcs[npcPos.id];
       if (!sprite) continue;
+
+      // Update NPC floor
+      const npcFloor = npcPos.floor ?? 0;
+      this._npcFloors[npcPos.id] = npcFloor;
+      sprite.setData('floor', npcFloor);
 
       let nx = npcPos.x;
       let ny = npcPos.y;
@@ -349,6 +395,9 @@ export default class ManorScene extends Phaser.Scene {
       }
     }
 
+    // Refresh floor visibility after NPC repositioning
+    this._showFloor(this.currentFloor);
+
     // Update evidence positions
     try {
       const positions = await window.gameAPI.getEvidencePositions();
@@ -373,6 +422,7 @@ export default class ManorScene extends Phaser.Scene {
       // Add new evidence sprites
       for (const pos of positions) {
         if (this.evidenceItems[pos.id]) continue;
+        const evFloor = pos.floor ?? 0;
         const glow = this.add.image(pos.x*T+T/2, pos.y*T+T/2, 'ev_glow').setDepth(8).setAlpha(0.7).setScale(1.5);
         this.tweens.add({
           targets: glow, alpha:{from:0.4,to:1.0}, scale:{from:1.3,to:1.8},
@@ -385,8 +435,12 @@ export default class ManorScene extends Phaser.Scene {
           .setDepth(9).setImmovable(true).setScale(1.5);
         sprite.body.setSize(20, 20);
         sprite.setData('id', pos.id);
-        this.evidenceItems[pos.id] = { sprite, glow, collected: false };
+        sprite.setData('floor', evFloor);
+        this.evidenceItems[pos.id] = { sprite, glow, collected: false, floor: evFloor };
       }
+
+      // Refresh floor visibility after evidence update
+      this._showFloor(this.currentFloor);
     } catch (err) {
       console.warn('Failed to update evidence positions:', err);
     }
@@ -396,32 +450,40 @@ export default class ManorScene extends Phaser.Scene {
 
   // ── BUILD ──────────────────────────────────────────────────
 
-  _buildFloors(T) {
-    for (const room of Object.values(this.rooms)) {
+  _buildFloorLevel(floorNum, T) {
+    const floorRooms = Object.values(this.rooms).filter(r => r.floorNum === floorNum);
+    const floorDoors = this.doors[floorNum] || [];
+
+    // Build floor tiles
+    for (const room of floorRooms) {
       for (let ry = 0; ry < room.h; ry++)
-        for (let rx = 0; rx < room.w; rx++)
-          this.add.image((room.x+rx)*T+T/2, (room.y+ry)*T+T/2, room.floor).setDepth(0);
+        for (let rx = 0; rx < room.w; rx++) {
+          const img = this.add.image((room.x+rx)*T+T/2, (room.y+ry)*T+T/2, room.floor).setDepth(0);
+          this._floorObjects[floorNum].push(img);
+        }
 
       // Room name label
-      this.add.text((room.x+room.w/2)*T, (room.y+1)*T, room.name, {
+      const label = this.add.text((room.x+room.w/2)*T, (room.y+1)*T, room.name, {
         fontFamily: '"Playfair Display", serif', fontSize: '11px', color: '#c9a84c55'
       }).setOrigin(0.5).setDepth(1);
+      this._floorObjects[floorNum].push(label);
     }
-    // Floor under doorways
-    for (const d of this.doors)
-      for (let dy=0; dy<d.h; dy++)
-        for (let dx=0; dx<d.w; dx++)
-          this.add.image((d.x+dx)*T+T/2, (d.y+dy)*T+T/2, 'tile_floor').setDepth(0);
-  }
 
-  _buildWalls(T) {
-    // Passability grid (true = blocked)
+    // Floor under doorways
+    for (const d of floorDoors)
+      for (let dy=0; dy<d.h; dy++)
+        for (let dx=0; dx<d.w; dx++) {
+          const img = this.add.image((d.x+dx)*T+T/2, (d.y+dy)*T+T/2, 'tile_floor').setDepth(0);
+          this._floorObjects[floorNum].push(img);
+        }
+
+    // Build walls
     const grid = Array.from({length:this.MAP_H}, () => Array(this.MAP_W).fill(true));
-    for (const r of Object.values(this.rooms))
+    for (const r of floorRooms)
       for (let ry=1; ry<r.h-1; ry++)
         for (let rx=1; rx<r.w-1; rx++)
           grid[r.y+ry][r.x+rx] = false;
-    for (const d of this.doors)
+    for (const d of floorDoors)
       for (let dy=0; dy<d.h; dy++)
         for (let dx=0; dx<d.w; dx++) {
           const gy=d.y+dy, gx=d.x+dx;
@@ -435,49 +497,215 @@ export default class ManorScene extends Phaser.Scene {
         // Only render visible walls (adjacent to passable)
         const visible = neighbors(x,y).some(([nx,ny]) =>
           nx>=0&&nx<this.MAP_W&&ny>=0&&ny<this.MAP_H&&!grid[ny][nx]);
-        if (visible)
-          this.add.image(x*T+T/2, y*T+T/2, 'tile_wall').setDepth(0);
+        if (visible) {
+          const wallImg = this.add.image(x*T+T/2, y*T+T/2, 'tile_wall').setDepth(0);
+          this._floorObjects[floorNum].push(wallImg);
+        }
         // Physics body for all wall cells
         const b = this.add.rectangle(x*T+T/2, y*T+T/2, T, T).setVisible(false);
         this.physics.add.existing(b, true);
+        this._floorWalls[floorNum].push(b);
         this.wallGroup.add(b);
       }
   }
 
+  _placeStairs(T) {
+    this.stairZones = [];
+    for (const stair of this.stairs) {
+      // Place stair tile images
+      const texKey = stair.toFloor > stair.fromFloor ? 'tile_stairs' : 'tile_stairs_down';
+      for (let sy = 0; sy < stair.h; sy++)
+        for (let sx = 0; sx < stair.w; sx++) {
+          const img = this.add.image((stair.x+sx)*T+T/2, (stair.y+sy)*T+T/2, texKey).setDepth(1);
+          this._floorObjects[stair.fromFloor].push(img);
+        }
+
+      // Create a trigger zone for the stair area
+      const zone = this.add.zone(
+        (stair.x + stair.w / 2) * T,
+        (stair.y + stair.h / 2) * T,
+        stair.w * T,
+        stair.h * T
+      );
+      zone.setData('fromFloor', stair.fromFloor);
+      zone.setData('toFloor', stair.toFloor);
+      zone.setData('exitX', stair.exitX);
+      zone.setData('exitY', stair.exitY);
+      this.stairZones.push(zone);
+    }
+  }
+
+  _showFloor(floorNum) {
+    // Show objects for the target floor, hide objects for other floors
+    for (const [fNum, objects] of Object.entries(this._floorObjects)) {
+      const show = parseInt(fNum) === floorNum;
+      for (const obj of objects) {
+        if (obj && !obj.destroyed) obj.setVisible(show);
+      }
+    }
+
+    // Enable/disable wall physics per floor
+    for (const [fNum, walls] of Object.entries(this._floorWalls)) {
+      const enable = parseInt(fNum) === floorNum;
+      for (const wall of walls) {
+        if (wall && wall.body && !wall.destroyed) {
+          wall.body.enable = enable;
+        }
+      }
+    }
+
+    // Enable/disable furniture physics per floor
+    for (const [fNum, furniture] of Object.entries(this._floorFurniture)) {
+      const enable = parseInt(fNum) === floorNum;
+      for (const body of furniture) {
+        if (body && body.body && !body.destroyed) {
+          body.body.enable = enable;
+        }
+      }
+    }
+
+    // Show/hide NPCs based on their floor
+    for (const [id, sprite] of Object.entries(this.npcs)) {
+      const npcFloor = this._npcFloors[id] ?? 0;
+      const show = npcFloor === floorNum;
+      sprite.setVisible(show);
+      if (sprite.body) sprite.body.enable = show;
+      if (this.npcLabels[id]) this.npcLabels[id].setVisible(show);
+    }
+
+    // Show/hide evidence based on their floor
+    for (const [id, ev] of Object.entries(this.evidenceItems)) {
+      if (ev.collected) continue;
+      const evFloor = ev.floor ?? 0;
+      const show = evFloor === floorNum;
+      if (ev.sprite && !ev.sprite.destroyed) {
+        ev.sprite.setVisible(show);
+        if (ev.sprite.body) ev.sprite.body.enable = show;
+      }
+      if (ev.glow && !ev.glow.destroyed) ev.glow.setVisible(show);
+    }
+
+    // Update floor indicator in HUD
+    this._updateFloorIndicator(floorNum);
+  }
+
+  async _switchFloor(toFloor) {
+    if (this._floorTransitioning || toFloor === this.currentFloor) return;
+    this._floorTransitioning = true;
+
+    const T = this.T;
+    const cam = this.cameras.main;
+
+    // Create fade overlay
+    const fadeRect = this.add.rectangle(
+      cam.scrollX + cam.width / 2,
+      cam.scrollY + cam.height / 2,
+      cam.width * 2,
+      cam.height * 2,
+      0x000000, 0
+    ).setScrollFactor(0).setDepth(500);
+
+    // Fade to black
+    await new Promise(resolve => {
+      this.tweens.add({
+        targets: fadeRect, alpha: 1, duration: 400, ease: 'Power2',
+        onComplete: resolve
+      });
+    });
+
+    // Switch floor
+    this.currentFloor = toFloor;
+    this._showFloor(toFloor);
+
+    // Notify server of floor change
+    window.gameAPI?.setFloor(toFloor).catch(() => {});
+
+    // Show floor transition text
+    const floorName = toFloor === 0 ? 'Ground Floor' : toFloor === 1 ? 'Upper Floor' : 'Basement';
+    const transText = this.add.text(
+      cam.width / 2, cam.height / 2,
+      '↕ ' + floorName,
+      { fontFamily: '"Playfair Display", serif', fontSize: '16px', color: '#c9a84c',
+        stroke: '#0a0a0a', strokeThickness: 3 }
+    ).setOrigin(0.5).setScrollFactor(0).setDepth(501).setAlpha(1);
+
+    await new Promise(r => this.time.delayedCall(500, r));
+
+    // Fade from black
+    await new Promise(resolve => {
+      this.tweens.add({
+        targets: fadeRect, alpha: 0, duration: 400, ease: 'Power2',
+        onComplete: resolve
+      });
+    });
+
+    // Fade out transition text
+    this.tweens.add({
+      targets: transText, alpha: 0, duration: 600,
+      onComplete: () => { transText.destroy(); fadeRect.destroy(); }
+    });
+
+    this._floorTransitioning = false;
+  }
+
+  _updateFloorIndicator(floorNum) {
+    const el = document.getElementById('hud-floor-indicator');
+    if (!el) return;
+    const names = { '-1': 'B', '0': 'G', '1': '1F' };
+    const labels = { '-1': 'Basement', '0': 'Ground Floor', '1': 'Upper Floor' };
+    el.textContent = '🏠 ' + (labels[floorNum] ?? `Floor ${floorNum}`);
+    el.title = labels[floorNum] ?? `Floor ${floorNum}`;
+  }
+
   _placeFurniture(T) {
     const defs = [
-      // Study
-      {x:4,y:14,k:'furn_desk'},{x:8,y:13,k:'furn_bookshelf'},{x:6,y:18,k:'furn_fireplace'},
-      // Library
-      {x:28,y:13,k:'furn_bookshelf'},{x:28,y:15,k:'furn_bookshelf'},{x:32,y:13,k:'furn_bookshelf'},{x:32,y:17,k:'furn_table'},
-      // Kitchen
-      {x:4,y:3,k:'furn_stove'},{x:4,y:6,k:'furn_table'},
-      // Dining Room
-      {x:30,y:5,k:'furn_table'},
-      // Conservatory
-      {x:4,y:23,k:'furn_plant'},{x:7,y:23,k:'furn_plant'},{x:4,y:27,k:'furn_plant'},{x:8,y:26,k:'furn_plant'},
-      // Bedroom
-      {x:28,y:23,k:'furn_bed'},{x:32,y:23,k:'furn_desk'},
-      // Foyer
-      {x:17,y:5,k:'furn_table'},{x:15,y:3,k:'furn_plant'},{x:20,y:3,k:'furn_plant'},
-      // Main Hall
-      {x:17,y:14,k:'furn_fireplace'},
+      // Study (ground floor)
+      {x:4,y:14,k:'furn_desk',f:0},{x:8,y:13,k:'furn_bookshelf',f:0},{x:6,y:18,k:'furn_fireplace',f:0},
+      // Library (ground floor)
+      {x:28,y:13,k:'furn_bookshelf',f:0},{x:28,y:15,k:'furn_bookshelf',f:0},{x:32,y:13,k:'furn_bookshelf',f:0},{x:32,y:17,k:'furn_table',f:0},
+      // Kitchen (ground floor)
+      {x:4,y:3,k:'furn_stove',f:0},{x:4,y:6,k:'furn_table',f:0},
+      // Dining Room (ground floor)
+      {x:30,y:5,k:'furn_table',f:0},
+      // Conservatory (ground floor)
+      {x:4,y:23,k:'furn_plant',f:0},{x:7,y:23,k:'furn_plant',f:0},{x:4,y:27,k:'furn_plant',f:0},{x:8,y:26,k:'furn_plant',f:0},
+      // Servants' Quarters (ground floor)
+      {x:28,y:23,k:'furn_bed',f:0},{x:32,y:23,k:'furn_desk',f:0},
+      // Foyer (ground floor)
+      {x:17,y:5,k:'furn_table',f:0},{x:15,y:3,k:'furn_plant',f:0},{x:20,y:3,k:'furn_plant',f:0},
+      // Main Hall (ground floor)
+      {x:17,y:14,k:'furn_fireplace',f:0},
+
+      // Upper floor furniture
+      // Upper Study
+      {x:4,y:14,k:'furn_desk',f:1},{x:8,y:13,k:'furn_bookshelf',f:1},
+      // Master Bedroom (upper floor)
+      {x:28,y:23,k:'furn_bed',f:1},{x:32,y:23,k:'furn_desk',f:1},
+      // Guest Bedroom (upper floor)
+      {x:4,y:3,k:'furn_bed',f:1},{x:4,y:6,k:'furn_desk',f:1},
+      // Upper Landing
+      {x:17,y:14,k:'furn_table',f:1},{x:15,y:14,k:'furn_plant',f:1},
+      // Balcony
+      {x:15,y:3,k:'furn_plant',f:1},{x:20,y:3,k:'furn_plant',f:1},{x:17,y:5,k:'furn_plant',f:1},
     ];
     for (const f of defs) {
+      const floorNum = f.f ?? 0;
       const img = this.add.image(f.x*T+T/2, f.y*T+T/2, f.k).setDepth(2);
       const body = this.add.rectangle(f.x*T+T/2, f.y*T+T/2, img.width, img.height).setVisible(false);
       this.physics.add.existing(body, true);
       this.furnitureGroup.add(body);
+      this._floorObjects[floorNum].push(img);
+      this._floorFurniture[floorNum].push(body);
     }
   }
 
   _placeNPCs(T) {
     const defs = [
-      { id:'victoria', key:'npc_victoria', name:'Lady Victoria',  x:6,  y:25 },
-      { id:'hartwell', key:'npc_hartwell', name:'Dr. Hartwell',   x:30, y:16 },
-      { id:'clara',    key:'npc_clara',    name:'Clara Blackwood', x:30, y:26 },
-      { id:'price',    key:'npc_price',    name:'Mr. Price',      x:30, y:4  },
-      { id:'agnes',    key:'npc_agnes',    name:'Mrs. Whitfield', x:6,  y:5  },
+      { id:'victoria', key:'npc_victoria', name:'Lady Victoria',  x:6,  y:25, floor:0 },
+      { id:'hartwell', key:'npc_hartwell', name:'Dr. Hartwell',   x:30, y:16, floor:0 },
+      { id:'clara',    key:'npc_clara',    name:'Clara Blackwood', x:30, y:26, floor:1 },
+      { id:'price',    key:'npc_price',    name:'Mr. Price',      x:30, y:4,  floor:0 },
+      { id:'agnes',    key:'npc_agnes',    name:'Mrs. Whitfield', x:6,  y:5,  floor:0 },
     ];
     for (const n of defs) {
       const sprite = this.physics.add.sprite(n.x*T+T/2, n.y*T+T/2, n.key)
@@ -487,6 +715,7 @@ export default class ManorScene extends Phaser.Scene {
       sprite.setPushable(false);
       sprite.setData('id', n.id);
       sprite.setData('name', n.name);
+      sprite.setData('floor', n.floor);
 
       const label = this.add.text(n.x*T+T/2, n.y*T-8, n.name, {
         fontFamily: '"Playfair Display", serif', fontSize: '9px', color: '#c9a84c',
@@ -499,6 +728,8 @@ export default class ManorScene extends Phaser.Scene {
         duration:2000, yoyo:true, repeat:-1, ease:'Sine.easeInOut'
       });
       this.npcs[n.id] = sprite;
+      this._npcFloors[n.id] = n.floor;
+    }
     }
 
     // Add NPC-to-NPC colliders so they never overlap
@@ -522,30 +753,33 @@ export default class ManorScene extends Phaser.Scene {
     this._crimeSceneRoom = 'Study';
 
     // Body outline in center of study
-    this.add.image(cx, cy, 'crime_body_outline').setDepth(2).setAlpha(0.85);
+    const body = this.add.image(cx, cy, 'crime_body_outline').setDepth(2).setAlpha(0.85);
+    this._floorObjects[0].push(body);
 
     // Blood splatters near the body
-    this.add.image(cx + T, cy - T * 0.5, 'crime_blood_1').setDepth(2).setAlpha(0.7);
-    this.add.image(cx - T * 0.8, cy + T * 0.6, 'crime_blood_2').setDepth(2).setAlpha(0.6);
-    this.add.image(cx + T * 1.5, cy + T, 'crime_blood_1').setDepth(2).setAlpha(0.5);
+    const b1 = this.add.image(cx + T, cy - T * 0.5, 'crime_blood_1').setDepth(2).setAlpha(0.7);
+    const b2 = this.add.image(cx - T * 0.8, cy + T * 0.6, 'crime_blood_2').setDepth(2).setAlpha(0.6);
+    const b3 = this.add.image(cx + T * 1.5, cy + T, 'crime_blood_1').setDepth(2).setAlpha(0.5);
+    this._floorObjects[0].push(b1, b2, b3);
 
     // Crime tape across the study entrance (doorway at x:10, y:15)
     const doorX = 10 * T + T;
     const doorY = 15 * T + T / 2;
-    this.add.image(doorX, doorY, 'crime_tape').setDepth(2).setAlpha(0.8);
-    this.add.image(doorX, doorY + 8, 'crime_tape').setDepth(2).setAlpha(0.8);
+    const t1 = this.add.image(doorX, doorY, 'crime_tape').setDepth(2).setAlpha(0.8);
+    const t2 = this.add.image(doorX, doorY + 8, 'crime_tape').setDepth(2).setAlpha(0.8);
+    this._floorObjects[0].push(t1, t2);
   }
 
   _placeEvidence(T) {
     const defs = [
-      { id:'brandy_glass',       key:'ev_brandy_glass',       x:5,  y:14 },
-      { id:'prescription_pad',   key:'ev_prescription_pad',   x:32, y:15 },
-      { id:'foxglove_cuttings',  key:'ev_foxglove_cuttings',  x:16, y:26 },
-      { id:'edmunds_letter',     key:'ev_edmunds_letter',     x:4,  y:15 },
-      { id:'love_letter',        key:'ev_love_letter',        x:7,  y:24 },
-      { id:'business_documents', key:'ev_business_documents', x:3,  y:14 },
-      { id:'agnes_diary',        key:'ev_agnes_diary',        x:5,  y:7  },
-      { id:'claras_manuscript',  key:'ev_claras_manuscript',  x:33, y:24 },
+      { id:'brandy_glass',       key:'ev_brandy_glass',       x:5,  y:14, floor:0 },
+      { id:'prescription_pad',   key:'ev_prescription_pad',   x:32, y:15, floor:0 },
+      { id:'foxglove_cuttings',  key:'ev_foxglove_cuttings',  x:16, y:26, floor:0 },
+      { id:'edmunds_letter',     key:'ev_edmunds_letter',     x:4,  y:15, floor:0 },
+      { id:'love_letter',        key:'ev_love_letter',        x:7,  y:24, floor:0 },
+      { id:'business_documents', key:'ev_business_documents', x:3,  y:14, floor:0 },
+      { id:'agnes_diary',        key:'ev_agnes_diary',        x:5,  y:7,  floor:0 },
+      { id:'claras_manuscript',  key:'ev_claras_manuscript',  x:33, y:24, floor:1 },
     ];
     for (const e of defs) {
       const glow = this.add.image(e.x*T+T/2, e.y*T+T/2, 'ev_glow').setDepth(8).setAlpha(0.7).setScale(1.5);
@@ -557,7 +791,8 @@ export default class ManorScene extends Phaser.Scene {
         .setDepth(9).setImmovable(true).setScale(1.5);
       sprite.body.setSize(20,20);
       sprite.setData('id', e.id);
-      this.evidenceItems[e.id] = { sprite, glow, collected:false };
+      sprite.setData('floor', e.floor);
+      this.evidenceItems[e.id] = { sprite, glow, collected:false, floor: e.floor };
     }
   }
 
@@ -667,6 +902,7 @@ export default class ManorScene extends Phaser.Scene {
     updateChase(this, this.game.loop.delta);
     updateLighting(this);
     this._handleInteractions();
+    this._checkStairs();
     updateNPCApproach(this, this.game.loop.delta);
     this._updateRoomLabel();
   }
@@ -688,15 +924,17 @@ export default class ManorScene extends Phaser.Scene {
     const range = 60;
     let closest = null, closestDist = range, closestType = null;
 
-    // NPCs
+    // NPCs — only interact with NPCs on the current floor
     for (const [id, sprite] of Object.entries(this.npcs)) {
+      if ((this._npcFloors[id] ?? 0) !== this.currentFloor) continue;
       const d = Phaser.Math.Distance.Between(this.player.x,this.player.y, sprite.x,sprite.y);
       if (d < closestDist) { closest={id,sprite,name:sprite.getData('name')}; closestDist=d; closestType='npc'; }
     }
-    // Evidence
+    // Evidence — only interact with evidence on the current floor
     const evEntries = Object.entries(this.evidenceItems);
     for (const [id, ev] of evEntries) {
       if (ev.collected) continue;
+      if ((ev.floor ?? 0) !== this.currentFloor) continue;
       const d = Phaser.Math.Distance.Between(this.player.x,this.player.y, ev.sprite.x,ev.sprite.y);
       if (d < closestDist) { closest={id,sprite:ev.sprite}; closestDist=d; closestType='evidence'; }
     }
@@ -739,6 +977,29 @@ export default class ManorScene extends Phaser.Scene {
     } else {
       this.interactPrompt.setVisible(false);
       this._ePressed = false;
+    }
+  }
+
+  _checkStairs() {
+    if (this._floorTransitioning) return;
+    if (!this.stairZones) return;
+
+    const px = this.player.x;
+    const py = this.player.y;
+
+    for (const zone of this.stairZones) {
+      if (zone.getData('fromFloor') !== this.currentFloor) continue;
+
+      const zx = zone.x;
+      const zy = zone.y;
+      const hw = zone.width / 2;
+      const hh = zone.height / 2;
+
+      if (px > zx - hw && px < zx + hw && py > zy - hh && py < zy + hh) {
+        const toFloor = zone.getData('toFloor');
+        this._switchFloor(toFloor);
+        break;
+      }
     }
   }
 
@@ -790,8 +1051,9 @@ export default class ManorScene extends Phaser.Scene {
   _updateRoomLabel() {
     const T = this.T;
     const px = Math.floor(this.player.x/T), py = Math.floor(this.player.y/T);
-    let roomName = 'Hallway';
+    let roomName = this.currentFloor === 0 ? 'Hallway' : 'Upper Hallway';
     for (const room of Object.values(this.rooms)) {
+      if (room.floorNum !== this.currentFloor) continue;
       if (px>=room.x && px<room.x+room.w && py>=room.y && py<room.y+room.h) {
         roomName = room.name; break;
       }
@@ -874,11 +1136,12 @@ export default class ManorScene extends Phaser.Scene {
     if (needH > this.MAP_H) this.MAP_H = needH;
 
     // Add the room to rooms registry
-    this.rooms[room.id] = { name: room.name, x: room.x, y: room.y, w: room.w, h: room.h, floor: room.floor || 'tile_carpet' };
+    this.rooms[room.id] = { name: room.name, x: room.x, y: room.y, w: room.w, h: room.h, floor: room.floor || 'tile_carpet', floorNum: 0 };
 
-    // Add doorway to doors
+    // Add doorway to ground floor doors
     if (room.doorway) {
-      this.doors.push(room.doorway);
+      if (!this.doors[0]) this.doors[0] = [];
+      this.doors[0].push(room.doorway);
     }
 
     // Build floor tiles for the new room
@@ -923,11 +1186,11 @@ export default class ManorScene extends Phaser.Scene {
 
     // Build walls for the new room area
     const grid = Array.from({length: this.MAP_H}, () => Array(this.MAP_W).fill(true));
-    for (const r of Object.values(this.rooms))
+    for (const r of Object.values(this.rooms).filter(r => r.floorNum === 0))
       for (let ry = 1; ry < r.h - 1; ry++)
         for (let rx = 1; rx < r.w - 1; rx++)
           if (r.y+ry < this.MAP_H && r.x+rx < this.MAP_W) grid[r.y+ry][r.x+rx] = false;
-    for (const d of this.doors)
+    for (const d of (this.doors[0] || []))
       for (let dy = 0; dy < d.h; dy++)
         for (let dx = 0; dx < d.w; dx++) {
           const gy = d.y+dy, gx = d.x+dx;
@@ -948,6 +1211,7 @@ export default class ManorScene extends Phaser.Scene {
         const b = this.add.rectangle(x*T+T/2, y*T+T/2, T, T).setVisible(false);
         this.physics.add.existing(b, true);
         this.wallGroup.add(b);
+        this._floorWalls[0].push(b);
       }
 
     // Place evidence in the new room

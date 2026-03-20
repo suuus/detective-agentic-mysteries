@@ -20,6 +20,7 @@ export default class BootScene extends Phaser.Scene {
     try {
       this._genTiles();
       this._genFurniture();
+      this._genStairs();
       this._genNPCs();
       this._genEvidence();
       this._genPlayer();
@@ -260,6 +261,47 @@ export default class BootScene extends Phaser.Scene {
     this._tex('prompt_examine', 80, 24, g => {
       g.fillStyle(0x000000, 0.7); g.fillRect(0,0,80,24);
       g.lineStyle(1, 0xc9a84c); g.strokeRect(0,0,80,24);
+    });
+  }
+
+  _genStairs() {
+    // Staircase tile — wooden steps going up
+    this._tex('tile_stairs', 32, 32, g => {
+      g.fillStyle(0x5c3a1e); g.fillRect(0,0,32,32);
+      // Step lines (darker grooves)
+      g.fillStyle(0x4a2e16);
+      for (let i = 0; i < 5; i++) {
+        g.fillRect(0, i * 6 + 2, 32, 4);
+        g.fillStyle(0x6b4423); g.fillRect(0, i * 6, 32, 2);
+        g.fillStyle(0x4a2e16);
+      }
+      // Arrow indicator (up)
+      g.fillStyle(0xc9a84c, 0.7);
+      g.fillTriangle(16, 4, 10, 14, 22, 14);
+      g.fillRect(13, 14, 6, 8);
+    });
+
+    // Staircase tile going down (for upper floor)
+    this._tex('tile_stairs_down', 32, 32, g => {
+      g.fillStyle(0x5c3a1e); g.fillRect(0,0,32,32);
+      g.fillStyle(0x4a2e16);
+      for (let i = 0; i < 5; i++) {
+        g.fillRect(0, i * 6 + 2, 32, 4);
+        g.fillStyle(0x6b4423); g.fillRect(0, i * 6, 32, 2);
+        g.fillStyle(0x4a2e16);
+      }
+      // Arrow indicator (down)
+      g.fillStyle(0xc9a84c, 0.7);
+      g.fillTriangle(16, 28, 10, 18, 22, 18);
+      g.fillRect(13, 10, 6, 8);
+    });
+
+    // Upper floor tile (slightly different shade to distinguish floors)
+    this._tex('tile_upper_floor', 32, 32, g => {
+      g.fillStyle(0x3a2e22); g.fillRect(0,0,32,32);
+      g.lineStyle(1, 0x302518); g.strokeRect(0,0,32,32);
+      g.lineStyle(1, 0x322a1e);
+      for(let i=0;i<5;i++){ g.beginPath(); g.moveTo(0,6+i*6); g.lineTo(32,6+i*6); g.strokePath(); }
     });
   }
 

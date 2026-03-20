@@ -142,6 +142,23 @@ export class GameAPI {
     return res.json();
   }
 
+  // ── Floor ───────────────────────────────────────────────────────
+  async getFloor() {
+    const res = await fetch(`${this.baseUrl}/api/floor`);
+    if (!res.ok) throw new Error(`Failed to fetch floor (${res.status})`);
+    return res.json();
+  }
+
+  async setFloor(floor) {
+    const res = await fetch(`${this.baseUrl}/api/floor`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ floor }),
+    });
+    if (!res.ok) throw new Error(`Failed to set floor (${res.status})`);
+    return res.json();
+  }
+
   // ── Reset ──────────────────────────────────────────────────────
   async reset() {
     const res = await fetch(`${this.baseUrl}/api/reset`, { method: 'POST' });

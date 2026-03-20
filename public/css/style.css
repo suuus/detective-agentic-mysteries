@@ -655,6 +655,17 @@ body {
   padding: 0 8px;
 }
 
+.hud-floor {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-heading);
+  font-size: 0.8rem;
+  color: var(--gold);
+  padding: 0 8px;
+  border-left: 1px solid rgba(201, 168, 76, 0.3);
+}
+
 /* ══════════════════════════
    SCROLLBAR GLOBAL
    ══════════════════════════ */
