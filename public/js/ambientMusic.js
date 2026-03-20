@@ -49,7 +49,7 @@ const F = {
   Eb3: 155.56, Gb3: 185.00, G3: 196.00,
   // Melody range (C minor pentatonic, octave 4-5)
   C4: 261.63, Eb4: 311.13, F4: 349.23, G4: 392.00, Bb4: 466.16,
-  C5: 523.25, Eb5: 622.25, F5: 698.46, G5: 783.99,
+  C5: 523.25, E5: 659.25, Eb5: 622.25, F5: 698.46, G5: 783.99,
 };
 
 // ── Mood presets ─────────────────────────────────────────────────
@@ -420,14 +420,14 @@ const STINGS = {
       [F.Eb4, 0.2, 'triangle'],
       [F.G4, 0.25, 'triangle'],
       [F.C5, 0.3, 'sine'],
-      [523.25, 0.5, 'sine'], // C5 sustained
+      [F.C5, 0.5, 'sine'], // C5 sustained
     ], 0.14);
     // Add a gentle major third for resolution warmth
     if (!ctx) return;
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
     osc.type = 'sine';
-    osc.frequency.value = 659.25; // E5 — major third above C5
+    osc.frequency.value = F.E5; // major third above C5
     const g = ctx.createGain();
     g.gain.setValueAtTime(0, now + 0.45);
     g.gain.linearRampToValueAtTime(0.10, now + 0.5);
