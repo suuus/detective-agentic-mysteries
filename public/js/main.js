@@ -206,7 +206,27 @@ async function openModelSettings() {
   }
   const res = await fetch('/api/settings/models');
   const current = await res.json();
+  const langRes = await fetch('/api/settings/language');
+  const langData = await langRes.json();
   settingsModels.innerHTML = '';
+
+  // Language setting
+  const LANGUAGES = ['English', 'French', 'Spanish', 'German', 'Italian', 'Portuguese', 'Dutch', 'Japanese', 'Korean', 'Chinese'];
+  const langRow = document.createElement('div');
+  langRow.className = 'settings-row';
+  langRow.innerHTML = `<label>🌍 NPC Language</label><select id="lang-select">
+    ${LANGUAGES.map(l => `<option value="${l}" ${langData.language === l ? 'selected' : ''}>${l}</option>`).join('')}
+  </select>`;
+  langRow.querySelector('select').addEventListener('change', async (e) => {
+    await fetch('/api/settings/language', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ language: e.target.value }),
+    });
+  });
+  settingsModels.appendChild(langRow);
+
+  // Model settings
   for (const [agent, label] of Object.entries(AGENT_LABELS)) {
     const row = document.createElement('div');
     row.className = 'settings-row';
@@ -231,6 +251,50 @@ document.getElementById('btn-settings-menu').addEventListener('click', openModel
 document.getElementById('settings-close').addEventListener('click', () => {
   settingsOverlay.classList.add('hidden');
 });
+
+// ── Changelog ────────────────────────────────────────────────────
+const changelogOverlay = document.getElementById('changelog-overlay');
+
+async function openChangelog() {
+  const res = await fetch('/api/version');
+  const data = await res.json();
+  document.getElementById('changelog-version').textContent = `Version ${data.version}`;
+  const list = document.getElementById('changelog-list');
+  list.innerHTML = '';
+
+  // Group commits by date
+  const groups = {};
+  for (const c of data.commits) {
+    if (!groups[c.date]) groups[c.date] = [];
+    groups[c.date].push(c);
+  }
+
+  for (const [date, commits] of Object.entries(groups)) {
+    const header = document.createElement('div');
+    header.style.cssText = 'color:var(--gold,#c9a84c);font-weight:bold;margin-top:12px;margin-bottom:4px;font-size:0.85rem';
+    header.textContent = date;
+    list.appendChild(header);
+    for (const c of commits) {
+      const row = document.createElement('div');
+      row.style.cssText = 'padding:3px 0 3px 12px;font-size:0.8rem;color:var(--cream,#ddd);border-left:2px solid rgba(255,255,255,0.1)';
+      const icon = c.message.startsWith('feat') ? '✨' : c.message.startsWith('fix') ? '🐛' : c.message.startsWith('chore') ? '🔧' : c.message.startsWith('docs') ? '📝' : '•';
+      row.innerHTML = `<span style="opacity:0.4;margin-right:6px">${c.hash}</span>${icon} ${c.message}`;
+      list.appendChild(row);
+    }
+  }
+
+  changelogOverlay.classList.remove('hidden');
+}
+
+document.getElementById('btn-changelog-menu').addEventListener('click', openChangelog);
+document.getElementById('changelog-close').addEventListener('click', () => {
+  changelogOverlay.classList.add('hidden');
+});
+
+// Show version on menu screen
+fetch('/api/version').then(r => r.json()).then(d => {
+  document.getElementById('menu-version').textContent = `v${d.version}`;
+}).catch(() => {});
 
 // ── Accusation modal ────────────────────────────────────────────
 const accusationModal   = document.getElementById('accusation-modal');

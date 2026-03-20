@@ -39,6 +39,8 @@
         </button>
       </div>
       <button id="btn-settings-menu" style="margin-top:16px;background:none;border:1px solid rgba(255,255,255,0.15);color:var(--cream);padding:8px 16px;border-radius:4px;cursor:pointer;font-size:0.85rem;opacity:0.7" title="AI Model Settings">⚙️ Model Settings</button>
+      <button id="btn-changelog-menu" style="margin-top:8px;background:none;border:1px solid rgba(255,255,255,0.15);color:var(--cream);padding:8px 16px;border-radius:4px;cursor:pointer;font-size:0.85rem;opacity:0.7" title="Changelog">📋 Changelog</button>
+      <div id="menu-version" style="margin-top:12px;font-size:0.7rem;opacity:0.35;color:var(--cream)"></div>
     </div>
   </div>
 
@@ -189,6 +191,18 @@
       <div id="settings-models"></div>
       <div class="settings-actions">
         <button id="settings-close" class="btn-primary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ CHANGELOG OVERLAY ══════════════ -->
+  <div id="changelog-overlay" class="modal-backdrop hidden">
+    <div class="settings-panel" style="max-width:560px;max-height:80vh;overflow-y:auto">
+      <h2>📋 Changelog</h2>
+      <p id="changelog-version" class="settings-note"></p>
+      <div id="changelog-list"></div>
+      <div class="settings-actions">
+        <button id="changelog-close" class="btn-primary">Close</button>
       </div>
     </div>
   </div>

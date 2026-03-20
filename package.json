@@ -1,11 +1,15 @@
 {
-  "name": "shadows-of-blackwood-manor",
+  "name": "detective-agentic-mysteries",
+  "version": "0.1.0",
   "type": "module",
   "license": "MIT",
   "description": "A 2D AI-powered detective game where every NPC is an independent AI agent. Built with Phaser 3, Express, and the GitHub Copilot SDK.",
   "scripts": {
     "dev": "tsx watch server.ts",
-    "start": "tsx server.ts"
+    "start": "tsx server.ts",
+    "release:patch": "npm version patch --no-git-tag-version && echo 'Bumped patch version'",
+    "release:minor": "npm version minor --no-git-tag-version && echo 'Bumped minor version'",
+    "release:major": "npm version major --no-git-tag-version && echo 'Bumped major version'"
   },
   "dependencies": {
     "@github/copilot-sdk": "^0.1.32",

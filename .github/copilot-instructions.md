@@ -51,3 +51,12 @@ See `docs/npc-design-guide.md` section 16 "How to Build a New Level" for the ful
 - Don't use spritesheet approach for player — individual frame textures (`player_down_0`, `player_left_1`, etc.) are more reliable
 - NPC system prompts must include all 12 game rules (see `docs/npc-design-guide.md` section 2)
 - Evidence IDs must match between `gameState.ts` (definitions), `BootScene.js` (sprites as `ev_{id}`), and `ManorScene.js` (placement)
+
+## Versioning & Changelog
+
+- Version lives in `package.json` (`"version": "0.1.0"`)
+- **Always bump the version** when making user-facing changes (features, fixes, UI updates)
+- Use npm scripts: `npm run release:patch` (0.1.0→0.1.1), `npm run release:minor` (0.1.0→0.2.0), `npm run release:major` (0.1.0→1.0.0)
+- The changelog is auto-generated from git commit history via `GET /api/version` — no manual changelog file
+- Write clear, conventional commit messages (e.g., `feat: add notebook auto-population`, `fix: evidence not appearing in generated levels`) so the changelog reads well
+- Version is displayed on the menu screen and the changelog modal groups commits by date with emoji icons

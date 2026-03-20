@@ -111,9 +111,40 @@ export function checkTimedEventTrigger(scene) {
         scene._fledNPCs = scene._fledNPCs || [];
         scene._fledNPCs.push(targetId);
       }
-      console.log(`[TimedEvent] ${targetName} fled the scene!`);
+
+      // Notify server — NPCs learn about the murder, clues are generated
+      fetch('/api/murder-event', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ victimId: targetId, victimName: targetName }),
+      }).catch(() => {});
+
+      // Show dramatic notification
+      const overlay = document.createElement('div');
+      overlay.id = 'timed-event-result';
+      overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(80,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:9999;animation:fadeIn 0.5s';
+      overlay.innerHTML = `<div style="text-align:center;color:#ff4444;font-family:var(--font-heading,Georgia,serif);max-width:500px;padding:32px">
+        <div style="font-size:3rem;margin-bottom:16px">💀</div>
+        <h2 style="font-size:1.8rem;margin-bottom:12px;color:#ff6666">THE KILLER STRUCK AGAIN</h2>
+        <p style="color:#ffaaaa;font-size:1.1rem;margin-bottom:8px">${targetName} has been found dead.</p>
+        <p style="color:#ff8888;font-size:0.9rem;margin-bottom:8px">You failed to prevent the murder. The investigation continues, but you've lost a potential witness.</p>
+        <p style="color:#ffcccc;font-size:0.85rem;margin-bottom:24px">📓 New clues have been added to your notebook. The remaining suspects have been informed.</p>
+        <button onclick="this.closest('#timed-event-result').remove()" style="background:#aa2222;color:white;border:none;padding:10px 24px;border-radius:4px;cursor:pointer;font-size:1rem">Continue Investigation</button>
+      </div>`;
+      document.body.appendChild(overlay);
+      console.log(`[TimedEvent] ${targetName} was murdered!`);
     },
     onSuccess: () => {
+      const overlay = document.createElement('div');
+      overlay.id = 'timed-event-result';
+      overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,40,0,0.85);display:flex;align-items:center;justify-content:center;z-index:9999;animation:fadeIn 0.5s';
+      overlay.innerHTML = `<div style="text-align:center;color:#44ff44;font-family:var(--font-heading,Georgia,serif);max-width:500px;padding:32px">
+        <div style="font-size:3rem;margin-bottom:16px">🛡️</div>
+        <h2 style="font-size:1.8rem;margin-bottom:12px;color:#66ff66">CRISIS AVERTED</h2>
+        <p style="color:#aaffaa;font-size:1.1rem;margin-bottom:24px">${targetName} is safe — your accusation scared the killer off.</p>
+        <button onclick="this.closest('#timed-event-result').remove()" style="background:#226622;color:white;border:none;padding:10px 24px;border-radius:4px;cursor:pointer;font-size:1rem">Continue</button>
+      </div>`;
+      document.body.appendChild(overlay);
       console.log(`[TimedEvent] Crisis averted — ${targetName} is safe.`);
     },
   });

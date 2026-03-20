@@ -1,10 +1,11 @@
 import express from "express";
 import cors from "cors";
+import { readFileSync } from "fs";
 import { CopilotClient, CopilotSession, approveAll } from "@github/copilot-sdk";
 import { GameStateManager } from "./src/gameState.js";
 import type { NightConversation, NightExchange } from "./src/gameState.js";
 import { createGameTools } from "./src/tools.js";
-import { createDirectorTools, DIRECTOR_SYSTEM_PROMPT } from "./src/director.js";
+import { createDirectorTools, DIRECTOR_SYSTEM_PROMPT, ALL_ROOM_POSITIONS } from "./src/director.js";
 import { createNarratorTools, NARRATOR_SYSTEM_PROMPT } from "./src/narrator.js";
 import { createProfilerTools, PROFILER_SYSTEM_PROMPT } from "./src/profiler.js";
 import { characters } from "./src/characters/index.js";
@@ -107,6 +108,14 @@ const modelSettings = {
   profiler: DEFAULT_MODEL,
 };
 
+// ── Game settings ────────────────────────────────────────────────
+let gameLanguage = "English"; // Language NPCs respond in
+
+function withLanguage(prompt: string): string {
+  if (!gameLanguage || gameLanguage.toLowerCase() === 'english') return prompt;
+  return `${prompt}\n\nIMPORTANT: The detective speaks ${gameLanguage}. You MUST respond in ${gameLanguage} at all times. Stay fully in character but speak ${gameLanguage}.`;
+}
+
 const sessions = new Map<string, CopilotSession>();
 
 // ── NPC response tracking for contradiction detection ────────────
@@ -183,7 +192,7 @@ async function getNarratorSession(): Promise<CopilotSession> {
     tools: narratorTools,
     onPermissionRequest: approveAll,
     infiniteSessions: { enabled: false },
-    systemMessage: { mode: "replace", content: NARRATOR_SYSTEM_PROMPT },
+    systemMessage: { mode: "replace", content: withLanguage(NARRATOR_SYSTEM_PROMPT) },
   });
   return narratorSession;
 }
@@ -452,9 +461,10 @@ async function recreateSession(characterId: string): Promise<CopilotSession> {
     tools: gameTools,
     onPermissionRequest: approveAll,
     infiniteSessions: { enabled: false },
-    systemMessage: { mode: "replace", content: character.systemPrompt },
+    systemMessage: { mode: "replace", content: withLanguage(character.systemPrompt) },
     hooks: createNPCHooks(),
   });
+
   sessions.set(characterId, session);
   return session;
 }
@@ -467,7 +477,6 @@ async function getOrCreateSession(characterId: string): Promise<CopilotSession> 
   if (!character) throw new Error(`Unknown character: ${characterId}`);
 
   const sessionId = `blackwood-${characterId}`;
-  // Delete any persisted session data to guarantee a clean start
   try { await client.deleteSession(sessionId); } catch {}
 
   const session = await client.createSession({
@@ -477,10 +486,7 @@ async function getOrCreateSession(characterId: string): Promise<CopilotSession> 
     tools: gameTools,
     onPermissionRequest: approveAll,
     infiniteSessions: { enabled: false },
-    systemMessage: {
-      mode: "replace",
-      content: character.systemPrompt,
-    },
+    systemMessage: { mode: "replace", content: withLanguage(character.systemPrompt) },
     hooks: createNPCHooks(),
   });
 
@@ -825,6 +831,58 @@ app.get("/api/contradictions", (_req, res) => {
 // Notebook clues
 app.get("/api/notebook", (_req, res) => {
   res.json({ clues: gameState.getNotebookClues(), contradictions: gameState.getContradictions() });
+});
+
+// Second murder event — notify all NPCs and generate crime scene clues
+app.post("/api/murder-event", async (req, res) => {
+  const { victimId, victimName } = req.body;
+  if (!victimId || !victimName) {
+    res.status(400).json({ error: "victimId and victimName required" });
+    return;
+  }
+
+  // Add notebook clues about the murder
+  gameState.addNotebookClue('💀 Second Murder', `${victimName} was found dead. The killer struck again while you investigated.`);
+  gameState.addNotebookClue('🔎 Crime Scene', `${victimName}'s body shows signs of a struggle. The killer is getting desperate — and sloppy.`);
+
+  // Notify all remaining NPCs about the murder (fire and forget)
+  const characters = getActiveCharacters();
+  for (const char of characters) {
+    if (char.id === victimId) continue;
+    const session = sessions.get(char.id);
+    if (!session) continue;
+    try {
+      sendAndCollect(char.id,
+        `[URGENT EVENT — NOT FROM THE DETECTIVE] ${victimName} has just been found DEAD. Another murder. This changes everything. ` +
+        `You are shocked, scared, or perhaps relieved — react according to your character. ` +
+        `When the detective next speaks to you, you KNOW about this second murder and should reference it. ` +
+        `Think about: Does this clear you? Implicate someone? Make you more afraid? Change your alliances?`
+      ).catch(() => {});
+    } catch {}
+  }
+
+  // Generate a crime scene evidence item via forensics
+  try {
+    const forensics = await getForensicsSession();
+    const analysis = await forensics.sendAndWait({
+      prompt: `A second murder has occurred. The victim is ${victimName}. Generate a brief forensic clue that would be found at this crime scene. 
+Return ONLY a JSON object: {"name": "short evidence name", "description": "what it is", "detail": "forensic significance — how it connects to the original murder"}
+No markdown, no explanation.`
+    }, 15_000);
+
+    const text = typeof analysis === 'string' ? analysis : (analysis as any)?.content ?? '';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const clue = JSON.parse(jsonMatch[0]);
+      gameState.addNotebookClue('🔬 Forensic Finding', `New evidence from ${victimName}'s crime scene: "${clue.name}" — ${clue.detail}`);
+      res.json({ notified: true, forensicClue: clue });
+      return;
+    }
+  } catch (err: any) {
+    console.warn('Forensic clue generation failed:', err.message);
+  }
+
+  res.json({ notified: true });
 });
 
 // Panic events
@@ -1412,6 +1470,17 @@ app.post("/api/level/select", async (req, res) => {
       systemPrompt: c.systemPrompt,
     }));
     generatedDirectorPrompt = generatedMystery.directorPrompt;
+
+    // Register generated room positions so Director can place NPCs/evidence
+    for (const room of generatedMystery.rooms) {
+      ALL_ROOM_POSITIONS[room.id] = {
+        x: [room.x + 1, room.x + room.w - 2],
+        y: [room.y + 1, room.y + room.h - 2],
+      };
+      // Also register by name (Director may use either)
+      ALL_ROOM_POSITIONS[room.name.toLowerCase().replace(/\s+/g, '_')] = ALL_ROOM_POSITIONS[room.id];
+    }
+
     gameState.loadLevelConfig({
       evidence: generatedMystery.evidence,
       evidencePositions: generatedMystery.evidencePositions,
@@ -1856,7 +1925,7 @@ app.post("/api/red-herring/activate", async (req, res) => {
       tools: gameTools,
       onPermissionRequest: approveAll,
       infiniteSessions: { enabled: false },
-      systemMessage: { mode: "replace", content: npc.systemPrompt },
+      systemMessage: { mode: "replace", content: withLanguage(npc.systemPrompt) },
       hooks: createNPCHooks(),
     });
     sessions.set(npc.id, redHerringSession);
@@ -1903,7 +1972,7 @@ app.get("/api/red-herring/check", async (_req, res) => {
           tools: gameTools,
           onPermissionRequest: approveAll,
           infiniteSessions: { enabled: false },
-          systemMessage: { mode: "replace", content: npc.systemPrompt },
+          systemMessage: { mode: "replace", content: withLanguage(npc.systemPrompt) },
           hooks: createNPCHooks(),
         });
         sessions.set(npc.id, redHerringSession);
@@ -1992,6 +2061,34 @@ app.get("/api/models", async (_req, res) => {
     console.error("Failed to list models:", err.message);
     res.status(500).json({ error: "Failed to list models" });
   }
+});
+
+app.get("/api/settings/language", (_req, res) => {
+  res.json({ language: gameLanguage });
+});
+
+app.post("/api/settings/language", (req, res) => {
+  const { language } = req.body;
+  if (!language) { res.status(400).json({ error: "language is required" }); return; }
+  gameLanguage = language;
+  console.log(`🌍 Language changed to ${language} — takes effect on next session creation`);
+  res.json({ language, note: "Start a new game or reset for NPCs to speak this language" });
+});
+
+// ── Version & Changelog (auto-generated from package.json + git) ─
+const pkg = JSON.parse(readFileSync("package.json", "utf-8"));
+
+app.get("/api/version", async (_req, res) => {
+  let commits: { hash: string; date: string; message: string }[] = [];
+  try {
+    const { execSync } = await import("child_process");
+    const log = execSync('git log --pretty=format:"%h|%as|%s" -20 2>/dev/null', { encoding: "utf-8" });
+    commits = log.trim().split("\n").filter(Boolean).map(line => {
+      const [hash, date, ...rest] = line.replace(/"/g, '').split("|");
+      return { hash, date, message: rest.join("|") };
+    });
+  } catch {}
+  res.json({ version: pkg.version, name: pkg.name, commits });
 });
 
 const PORT = 3000;
