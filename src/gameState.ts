@@ -47,6 +47,8 @@ export interface GameState {
   tamperedEvidence: string[];
   // Notebook clues — auto-populated from NPC reveals and key events
   notebookClues: { source: string; text: string; day: number }[];
+  // Whisper cooldowns — tracks which NPC pairs have whispered today
+  whisperCooldowns: Record<string, number>;  // "npcA:npcB" -> day number of last whisper
 }
 
 export interface Evidence {
@@ -380,6 +382,7 @@ export class GameStateManager {
       alliances: [],
       tamperedEvidence: [],
       notebookClues: [],
+      whisperCooldowns: {},
     };
   }
 
@@ -698,6 +701,25 @@ export class GameStateManager {
 
   getEavesdroppedInfo(characterId: string): string[] {
     return this.state.eavesdropped[characterId] || [];
+  }
+
+  // ── Whisper System ────────────────────────────────────────────
+  /** Returns a canonical key for an NPC pair (sorted so A:B === B:A). */
+  private whisperKey(npcA: string, npcB: string): string {
+    return [npcA, npcB].sort().join(':');
+  }
+
+  /** Check if a whisper is allowed for this pair today. */
+  canWhisper(npcA: string, npcB: string): boolean {
+    const key = this.whisperKey(npcA, npcB);
+    const lastDay = this.state.whisperCooldowns[key];
+    return lastDay !== this.state.currentDay;
+  }
+
+  /** Mark that this pair has whispered today. */
+  recordWhisper(npcA: string, npcB: string): void {
+    const key = this.whisperKey(npcA, npcB);
+    this.state.whisperCooldowns[key] = this.state.currentDay;
   }
 
   // ── Contradiction Detector ────────────────────────────────────
