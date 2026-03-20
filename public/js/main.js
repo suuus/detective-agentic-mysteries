@@ -17,6 +17,7 @@ import RandomBootScene from './scenes/RandomBootScene.js';
 import RandomManorScene from './scenes/RandomManorScene.js';
 import { playReconstruction } from './reconstruction.js';
 import { initAmbientMusic, toggleMusic, setMood, isMusicEnabled } from './ambientMusic.js';
+import { initVoiceInput } from './voiceInput.js';
 
 // ── Managers ─────────────────────────────────────────────────────
 const api = new GameAPI();
@@ -34,6 +35,10 @@ initNpcTTS();
 window.speakNarration = speakNarration;
 window.speakNPC = speakNPC;
 window.setNPCTTSEnabled = setNPCTTSEnabled;
+
+// ── Voice Input (STT) ────────────────────────────────────────────
+const voiceInput = initVoiceInput();
+dialog.setVoiceInput(voiceInput);
 
 // ── Ambient Music ────────────────────────────────────────────────
 initAmbientMusic();

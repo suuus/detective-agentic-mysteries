@@ -9,6 +9,9 @@ export class DialogManager {
     this.currentCharacterName = '';
     this.responding = false;
 
+    /** @type {import('./voiceInput.js').VoiceInputManager|null} */
+    this.voiceInput = null;
+
     // Per-character conversation memory { characterId: [{role,text}] }
     this.history = {};
 
@@ -26,6 +29,23 @@ export class DialogManager {
     this.closeBtn      = document.getElementById('dialog-close-btn');
 
     this._bindEvents();
+  }
+
+  /** Attach a VoiceInputManager and wire its callbacks to the dialog flow. */
+  setVoiceInput(manager) {
+    this.voiceInput = manager;
+    if (!manager) return;
+
+    // When a final transcript is received, update input and auto-send
+    manager.onResult = (text) => {
+      if (this.input) {
+        this.input.value = text;
+        this.input.placeholder = 'Ask a question…';
+      }
+      if (text && text.trim() && !this.responding) {
+        this.sendMessage(text);
+      }
+    };
   }
 
   // ── Public API ─────────────────────────────────────────────────
@@ -60,6 +80,7 @@ export class DialogManager {
     this.currentCharacter = null;
     this.evidencePanel.classList.add('hidden');
     if (window.speechSynthesis) speechSynthesis.cancel();
+    if (this.voiceInput?.listening) this.voiceInput.stopListening();
     const moodEl = document.getElementById('dialog-mood');
     if (moodEl) moodEl.classList.add('hidden');
     // Release focus so Phaser can receive keyboard events again
@@ -187,6 +208,8 @@ export class DialogManager {
     this.responding = flag;
     this.input.disabled = flag;
     this.sendBtn.disabled = flag;
+    const micBtn = document.getElementById('dialog-mic-btn');
+    if (micBtn) micBtn.disabled = flag;
     this.typingEl.classList.toggle('hidden', !flag);
     if (!flag) this.input.focus();
   }

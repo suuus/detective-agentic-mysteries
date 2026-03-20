@@ -247,6 +247,58 @@ body {
 .evidence-subpanel li:hover { background: rgba(201, 168, 76, 0.12); }
 
 /* ══════════════════════════
+   VOICE INPUT
+   ══════════════════════════ */
+.voice-btn {
+  padding: 8px 12px;
+  font-size: 1.1rem;
+  min-width: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.voice-btn.recording {
+  background: rgba(220, 50, 50, 0.25);
+  border-color: #c44;
+  animation: pulse-mic 1s ease-in-out infinite;
+}
+.voice-toggle.active {
+  background: rgba(201, 168, 76, 0.2);
+  border-color: var(--gold);
+}
+@keyframes pulse-mic {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 50, 50, 0.4); }
+  50%      { box-shadow: 0 0 0 6px rgba(220, 50, 50, 0); }
+}
+
+/* Waveform animation shown while recording */
+.voice-waveform {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 6px 0;
+  flex-shrink: 0;
+}
+.voice-waveform span {
+  display: inline-block;
+  width: 3px;
+  height: 14px;
+  background: var(--gold);
+  border-radius: 2px;
+  animation: waveform 0.8s ease-in-out infinite;
+}
+.voice-waveform span:nth-child(1) { animation-delay: 0s;    height: 10px; }
+.voice-waveform span:nth-child(2) { animation-delay: 0.12s; height: 18px; }
+.voice-waveform span:nth-child(3) { animation-delay: 0.24s; height: 24px; }
+.voice-waveform span:nth-child(4) { animation-delay: 0.12s; height: 18px; }
+.voice-waveform span:nth-child(5) { animation-delay: 0s;    height: 10px; }
+@keyframes waveform {
+  0%, 100% { transform: scaleY(0.4); opacity: 0.5; }
+  50%      { transform: scaleY(1);   opacity: 1; }
+}
+
+/* ══════════════════════════
    SIDE PANELS (inventory / notebook)
    ══════════════════════════ */
 .side-panel {
