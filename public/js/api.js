@@ -306,4 +306,23 @@ export class GameAPI {
     if (!res.ok) throw new Error(`Failed to adjust sentiment (${res.status})`);
     return res.json();
   }
+
+  // ── Replay & Analytics ────────────────────────────────────────────
+  async getReplay() {
+    const res = await fetch(`${this.baseUrl}/api/replay`);
+    if (!res.ok) throw new Error(`Failed to fetch replay (${res.status})`);
+    return res.json();
+  }
+
+  async getAnalytics() {
+    const res = await fetch(`${this.baseUrl}/api/analytics`);
+    if (!res.ok) throw new Error(`Failed to fetch analytics (${res.status})`);
+    return res.json();
+  }
+
+  async exportReplay() {
+    const res = await fetch(`${this.baseUrl}/api/replay/export`);
+    if (!res.ok) throw new Error(`Failed to export replay (${res.status})`);
+    return res.json();
+  }
 }

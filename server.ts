@@ -4,6 +4,7 @@ import { readFileSync } from "fs";
 import { CopilotClient, CopilotSession, approveAll } from "@github/copilot-sdk";
 import { GameStateManager } from "./src/gameState.js";
 import type { NightConversation, NightExchange } from "./src/gameState.js";
+import { EventLog } from "./src/eventLog.js";
 import { createGameTools } from "./src/tools.js";
 import { createDirectorTools, DIRECTOR_SYSTEM_PROMPT, ALL_ROOM_POSITIONS } from "./src/director.js";
 import { createNarratorTools, NARRATOR_SYSTEM_PROMPT } from "./src/narrator.js";
@@ -91,6 +92,7 @@ app.use(express.json());
 app.use(express.static("public"));
 
 const gameState = new GameStateManager();
+const eventLog = new EventLog();
 const gameTools = createGameTools(gameState);
 
 const client = new CopilotClient();
@@ -682,6 +684,13 @@ app.post("/api/talk/:characterId", async (req, res) => {
     res.write("data: [DONE]\n\n");
     res.end();
 
+    // Log the conversation event
+    eventLog.log(
+      gameState.getCurrentDay(), gameState.getTimeOfDay(),
+      'talk', 'player', `Talked to ${character.name}`,
+      { characterId, question: message, responseLength: fullResponse.length },
+    );
+
     // Spread gossip to other NPCs (fire and forget)
     spreadGossip(characterId, message).catch(err =>
       console.error("Gossip failed:", err.message)
@@ -787,6 +796,11 @@ app.post("/api/evidence/:evidenceId/collect", (req, res) => {
   const evidence = gameState.getEvidence(evidenceId);
   if (evidence) {
     gameState.addNotebookClue('📦 Evidence', `Found "${evidence.name}" in ${evidence.location}: ${evidence.description}`);
+    eventLog.log(
+      gameState.getCurrentDay(), gameState.getTimeOfDay(),
+      'evidence_collect', 'player', `Collected ${evidence.name}`,
+      { evidenceId, evidenceName: evidence.name, location: evidence.location },
+    );
   }
   res.json({ collected: true, evidence });
 });
@@ -801,6 +815,11 @@ app.post("/api/evidence/:evidenceId/show/:characterId", (req, res) => {
     return;
   }
   res.json({ shown: true, evidenceId, characterId });
+  eventLog.log(
+    gameState.getCurrentDay(), gameState.getTimeOfDay(),
+    'evidence_show', 'player', `Showed evidence to ${characterId}`,
+    { evidenceId, characterId },
+  );
 });
 
 // Game state
@@ -844,6 +863,11 @@ app.post("/api/murder-event", async (req, res) => {
   // Add notebook clues about the murder
   gameState.addNotebookClue('💀 Second Murder', `${victimName} was found dead. The killer struck again while you investigated.`);
   gameState.addNotebookClue('🔎 Crime Scene', `${victimName}'s body shows signs of a struggle. The killer is getting desperate — and sloppy.`);
+  eventLog.log(
+    gameState.getCurrentDay(), gameState.getTimeOfDay(),
+    'murder_event', 'system', `Second murder: ${victimName}`,
+    { victimId, victimName },
+  );
 
   // Notify all remaining NPCs about the murder (fire and forget)
   const characters = getActiveCharacters();
@@ -924,6 +948,24 @@ app.post("/api/accuse", (req, res) => {
     return;
   }
   const result = gameState.makeAccusation(suspectId, motive, evidenceIds);
+  eventLog.log(
+    gameState.getCurrentDay(), gameState.getTimeOfDay(),
+    'accusation', 'player', `Accused ${suspectId}`,
+    { suspectId, motive, evidenceIds, correct: result.correct, attemptsLeft: result.attemptsRemaining },
+  );
+  if (result.correct) {
+    eventLog.log(
+      gameState.getCurrentDay(), gameState.getTimeOfDay(),
+      'game_end', 'system', 'Case solved',
+      { won: true },
+    );
+  } else if (result.attemptsRemaining <= 0) {
+    eventLog.log(
+      gameState.getCurrentDay(), gameState.getTimeOfDay(),
+      'game_end', 'system', 'Case closed — no attempts remaining',
+      { won: false },
+    );
+  }
   res.json(result);
 });
 
@@ -1099,6 +1141,11 @@ app.post("/api/day/advance", async (_req, res) => {
       message: 'Night has fallen over Blackwood Manor...',
       conversations,
     });
+    eventLog.log(
+      gameState.getCurrentDay(), gameState.getTimeOfDay(),
+      'day_advance', 'system', 'Night fell',
+      { day: gameState.getCurrentDay(), phase: 'night', conversationCount: conversations.length },
+    );
   } else {
     const result = gameState.advanceToNextDay();
 
@@ -1140,6 +1187,11 @@ app.post("/api/day/advance", async (_req, res) => {
       overnightNarrative: result.dayConfig.overnightNarrative,
       conversations: gameState.getLastNightConversations(),
     });
+    eventLog.log(
+      gameState.getCurrentDay(), gameState.getTimeOfDay(),
+      'day_advance', 'system', `Day ${gameState.getCurrentDay()} dawned`,
+      { day: gameState.getCurrentDay(), phase: 'day' },
+    );
   }
 });
 
@@ -1448,6 +1500,7 @@ app.post("/api/level/select", async (req, res) => {
 
   activeLevel = levelId;
   gameState.reset();
+  eventLog.reset();
   gameState._activeLevel = levelId;
 
   // If cruise level, configure gameState with cruise evidence/config
@@ -1491,6 +1544,12 @@ app.post("/api/level/select", async (req, res) => {
       winMessage: generatedMystery.winMessage,
     });
   }
+
+  eventLog.log(
+    gameState.getCurrentDay(), gameState.getTimeOfDay(),
+    'game_start', 'system', `Game started — ${levelId} level`,
+    { level: levelId },
+  );
 
   res.json({ level: levelId, message: `Level set to: ${levelId}` });
 });
@@ -1622,6 +1681,11 @@ app.post("/api/hidden-room/reveal", (req, res) => {
   }
 
   console.log(`🚪 Hidden room revealed: ${room.name} at (${room.x}, ${room.y})`);
+  eventLog.log(
+    gameState.getCurrentDay(), gameState.getTimeOfDay(),
+    'hidden_room', 'system', `Hidden room revealed: ${room.name}`,
+    { roomId: room.id, roomName: room.name },
+  );
   res.json({ revealed: true, room });
 });
 
@@ -1930,6 +1994,11 @@ app.post("/api/red-herring/activate", async (req, res) => {
     });
     sessions.set(npc.id, redHerringSession);
     console.log(`🎭 Red herring NPC activated: ${npc.name} (${npc.id})`);
+    eventLog.log(
+      gameState.getCurrentDay(), gameState.getTimeOfDay(),
+      'red_herring', 'system', `Red herring appeared: ${npc.name}`,
+      { npcId: npc.id, npcName: npc.name },
+    );
     res.json({ active: true, npc: { id: npc.id, name: npc.name, x: npc.x, y: npc.y, room: npc.room, color: npc.color } });
   } catch (err: any) {
     console.error(`Failed to create red herring session: ${err.message}`);
@@ -1987,6 +2056,27 @@ app.get("/api/red-herring/check", async (_req, res) => {
   res.json({ shouldActivate, active: redHerringActive, npc: redHerringNPC ? { id: redHerringNPC.id, name: redHerringNPC.name, x: redHerringNPC.x, y: redHerringNPC.y, room: redHerringNPC.room, color: redHerringNPC.color } : null });
 });
 
+// ── Session Replay & Analytics ────────────────────────────────────
+app.get("/api/replay", (_req, res) => {
+  res.json({ events: eventLog.getEvents() });
+});
+
+app.get("/api/analytics", (_req, res) => {
+  res.json(eventLog.getAnalytics());
+});
+
+app.get("/api/replay/export", (_req, res) => {
+  const data = {
+    exportedAt: new Date().toISOString(),
+    level: activeLevel,
+    events: eventLog.getEvents(),
+    analytics: eventLog.getAnalytics(),
+  };
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Disposition', 'attachment; filename="replay.json"');
+  res.json(data);
+});
+
 // Reset
 app.post("/api/reset", async (_req, res) => {
   for (const [id, session] of sessions) {
@@ -2030,6 +2120,7 @@ app.post("/api/reset", async (_req, res) => {
   hiddenRoomRevealed = false;
   console.log("🧹 Full reset: all sessions cleared and deleted");
   gameState.reset();
+  eventLog.reset();
   res.json({ reset: true });
 });
 

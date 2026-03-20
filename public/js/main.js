@@ -18,6 +18,7 @@ import RandomManorScene from './scenes/RandomManorScene.js';
 import { playReconstruction } from './reconstruction.js';
 import { initAmbientMusic, toggleMusic, setMood, isMusicEnabled } from './ambientMusic.js';
 import { initVoiceInput } from './voiceInput.js';
+import { ReplayViewer } from './replay.js';
 
 // ── Managers ─────────────────────────────────────────────────────
 const api = new GameAPI();
@@ -43,6 +44,9 @@ dialog.setVoiceInput(voiceInput);
 // ── Ambient Music ────────────────────────────────────────────────
 initAmbientMusic();
 window.setMusicMood = setMood;
+
+// ── Replay Viewer ────────────────────────────────────────────────
+const replay = new ReplayViewer(api);
 
 // ── Phaser config ────────────────────────────────────────────────
 const config = {
@@ -295,6 +299,10 @@ document.getElementById('btn-changelog-menu').addEventListener('click', openChan
 document.getElementById('changelog-close').addEventListener('click', () => {
   changelogOverlay.classList.add('hidden');
 });
+
+// ── Replay buttons ───────────────────────────────────────────────
+document.getElementById('btn-replay-menu').addEventListener('click', () => replay.open());
+document.getElementById('btn-replay').addEventListener('click', () => replay.open());
 
 // Show version on menu screen
 fetch('/api/version').then(r => r.json()).then(d => {
