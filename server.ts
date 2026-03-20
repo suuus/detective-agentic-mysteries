@@ -1502,11 +1502,6 @@ app.post("/api/level/select", async (req, res) => {
   gameState.reset();
   eventLog.reset();
   gameState._activeLevel = levelId;
-  eventLog.log(
-    gameState.getCurrentDay(), gameState.getTimeOfDay(),
-    'game_start', 'system', `Game started — ${levelId} level`,
-    { level: levelId },
-  );
 
   // If cruise level, configure gameState with cruise evidence/config
   if (levelId === 'cruise') {
@@ -1549,6 +1544,12 @@ app.post("/api/level/select", async (req, res) => {
       winMessage: generatedMystery.winMessage,
     });
   }
+
+  eventLog.log(
+    gameState.getCurrentDay(), gameState.getTimeOfDay(),
+    'game_start', 'system', `Game started — ${levelId} level`,
+    { level: levelId },
+  );
 
   res.json({ level: levelId, message: `Level set to: ${levelId}` });
 });
