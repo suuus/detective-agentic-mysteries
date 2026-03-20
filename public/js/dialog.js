@@ -36,10 +36,12 @@ export class DialogManager {
     this.voiceInput = manager;
     if (!manager) return;
 
-    // When a final transcript is received, auto-send it
-    const prevOnResult = manager.onResult;
+    // When a final transcript is received, update input and auto-send
     manager.onResult = (text) => {
-      prevOnResult?.(text);
+      if (this.input) {
+        this.input.value = text;
+        this.input.placeholder = 'Ask a question…';
+      }
       if (text && text.trim() && !this.responding) {
         this.sendMessage(text);
       }

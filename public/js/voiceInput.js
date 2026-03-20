@@ -222,14 +222,12 @@ export function initVoiceInput() {
     }
   };
 
-  // On final result, restore placeholder
-  const originalOnResult = manager.onResult;
+  // On final result, update the input field and restore placeholder
   manager.onResult = (text) => {
     if (input) {
       input.value = text;
       input.placeholder = 'Ask a question…';
     }
-    originalOnResult?.(text);
   };
 
   // ── Keyboard shortcut: V key for push-to-talk ──
