@@ -47,7 +47,7 @@ export default class ManorScene extends Phaser.Scene {
       kitchen:     { name:'Kitchen',         x:1,  y:1,  w:10, h:10, floor:'tile_kitchen_floor', floorNum: 0 },
       dining_room: { name:'Dining Room',     x:25, y:1,  w:10, h:10, floor:'tile_floor', floorNum: 0 },
       conservatory:{ name:'Conservatory',    x:1,  y:21, w:10, h:10, floor:'tile_floor', floorNum: 0 },
-      bedroom:     { name:"Servants' Quarters", x:25, y:21, w:10, h:10, floor:'tile_carpet', floorNum: 0 },
+      bedroom:     { name:"Clara's Bedroom", x:25, y:21, w:10, h:10, floor:'tile_carpet', floorNum: 0 },
       garden:      { name:'Garden',          x:12, y:21, w:12, h:10, floor:'tile_grass', floorNum: 0 },
       foyer:       { name:'Foyer',           x:12, y:1,  w:12, h:10, floor:'tile_floor', floorNum: 0 },
       // Upper floor rooms (reuse same tile coordinate space)
@@ -669,7 +669,7 @@ export default class ManorScene extends Phaser.Scene {
       {x:30,y:5,k:'furn_table',f:0},
       // Conservatory (ground floor)
       {x:4,y:23,k:'furn_plant',f:0},{x:7,y:23,k:'furn_plant',f:0},{x:4,y:27,k:'furn_plant',f:0},{x:8,y:26,k:'furn_plant',f:0},
-      // Servants' Quarters (ground floor)
+      // Clara's Bedroom (ground floor)
       {x:28,y:23,k:'furn_bed',f:0},{x:32,y:23,k:'furn_desk',f:0},
       // Foyer (ground floor)
       {x:17,y:5,k:'furn_table',f:0},{x:15,y:3,k:'furn_plant',f:0},{x:20,y:3,k:'furn_plant',f:0},
@@ -730,7 +730,6 @@ export default class ManorScene extends Phaser.Scene {
       this.npcs[n.id] = sprite;
       this._npcFloors[n.id] = n.floor;
     }
-    }
 
     // Add NPC-to-NPC colliders so they never overlap
     const npcList = Object.values(this.npcs);
@@ -779,7 +778,7 @@ export default class ManorScene extends Phaser.Scene {
       { id:'love_letter',        key:'ev_love_letter',        x:7,  y:24, floor:0 },
       { id:'business_documents', key:'ev_business_documents', x:3,  y:14, floor:0 },
       { id:'agnes_diary',        key:'ev_agnes_diary',        x:5,  y:7,  floor:0 },
-      { id:'claras_manuscript',  key:'ev_claras_manuscript',  x:33, y:24, floor:1 },
+      { id:'claras_manuscript',  key:'ev_claras_manuscript',  x:31, y:27, floor:1 },
     ];
     for (const e of defs) {
       const glow = this.add.image(e.x*T+T/2, e.y*T+T/2, 'ev_glow').setDepth(8).setAlpha(0.7).setScale(1.5);
