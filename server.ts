@@ -833,6 +833,94 @@ app.get("/api/notebook", (_req, res) => {
   res.json({ clues: gameState.getNotebookClues(), contradictions: gameState.getContradictions() });
 });
 
+// ── Whisper conversations (NPC-to-NPC overheard by player) ──────
+app.post("/api/whisper", async (req, res) => {
+  const { npcA, npcB } = req.body;
+  if (!npcA || !npcB) {
+    res.status(400).json({ error: "npcA and npcB required" });
+    return;
+  }
+
+  if (!gameState.canWhisper(npcA, npcB)) {
+    res.status(429).json({ error: "This pair has already whispered today" });
+    return;
+  }
+
+  const charA = getActiveCharacters().find((c: any) => c.id === npcA);
+  const charB = getActiveCharacters().find((c: any) => c.id === npcB);
+  if (!charA || !charB) {
+    res.status(404).json({ error: "Character not found" });
+    return;
+  }
+
+  gameState.recordWhisper(npcA, npcB);
+
+  const nameA = charA.name;
+  const nameB = charB.name;
+  const sentA = gameState.getSentimentDescription(npcA);
+  const sentB = gameState.getSentimentDescription(npcB);
+  const investigation = gameState.getInvestigationSummary();
+  const exchanges: { speaker: string; speakerName: string; text: string }[] = [];
+
+  try {
+    // Round 1: A whispers to B
+    const promptA = `[WHISPER — you are NOT speaking to the detective. You've spotted ${nameB} nearby and want to exchange a few quiet words.]
+
+You are whispering to ${nameB} during the day while the detective is nearby. Keep it SHORT — 1-2 sentences max. Be hushed and urgent.
+
+YOUR EMOTIONAL STATE: ${sentA}
+INVESTIGATION SO FAR: ${investigation}
+
+Topics you might whisper about: suspicions about other suspects, something the detective asked you, a warning, a secret, something you noticed, or a plea for help. Be natural and brief — this is a furtive exchange, not a full conversation.`;
+
+    const responseA = await sendAndCollect(npcA, promptA);
+    if (!responseA) {
+      res.json({ exchanges: [] });
+      return;
+    }
+    exchanges.push({ speaker: npcA, speakerName: nameA, text: responseA });
+
+    // Round 2: B whispers back
+    const promptB = `[WHISPER — you are NOT speaking to the detective. ${nameA} just whispered something to you.]
+
+YOUR EMOTIONAL STATE: ${sentB}
+
+${nameA} whispered: "${responseA}"
+
+Whisper a brief reply — 1-2 sentences max. Be quiet and guarded. The detective might be nearby.`;
+
+    const responseB = await sendAndCollect(npcB, promptB);
+    if (responseB) {
+      exchanges.push({ speaker: npcB, speakerName: nameB, text: responseB });
+    }
+
+    // Round 3 (optional): A has last word — 50% chance
+    if (responseB && Math.random() < 0.5) {
+      const promptA2 = `[WHISPER — final hushed word to ${nameB} before you both move on.]
+${nameB} whispered: "${responseB}"
+One last sentence, whispered. Then you part ways.`;
+
+      const responseA2 = await sendAndCollect(npcA, promptA2);
+      if (responseA2) {
+        exchanges.push({ speaker: npcA, speakerName: nameA, text: responseA2 });
+      }
+    }
+
+    // Log overheard whisper to notebook
+    if (exchanges.length > 0) {
+      const snippets = exchanges.map(e => `${e.speakerName}: "${e.text}"`).join(' ');
+      const summary = snippets.length > 200 ? snippets.slice(0, 197) + '...' : snippets;
+      gameState.addNotebookClue(`🤫 Overheard (${nameA} & ${nameB})`, summary);
+    }
+
+    console.log(`🤫 Whisper: ${nameA} + ${nameB} (${exchanges.length} exchanges)`);
+    res.json({ exchanges });
+  } catch (err: any) {
+    console.error(`⚠️  Whisper failed for ${nameA}+${nameB}:`, err.message);
+    res.json({ exchanges: [] });
+  }
+});
+
 // Second murder event — notify all NPCs and generate crime scene clues
 app.post("/api/murder-event", async (req, res) => {
   const { victimId, victimName } = req.body;

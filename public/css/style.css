@@ -777,6 +777,55 @@ body {
   z-index: 1001;
 }
 
+/* ── Whisper toast ── */
+#whisper-toast {
+  position: fixed;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-20px);
+  min-width: 280px;
+  max-width: 420px;
+  background: linear-gradient(135deg, rgba(20, 15, 30, 0.95), rgba(30, 20, 40, 0.92));
+  border: 1px solid rgba(201, 168, 76, 0.4);
+  border-radius: 8px;
+  padding: 12px 18px;
+  z-index: 200;
+  opacity: 0;
+  transition: opacity 0.5s ease, transform 0.5s ease;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6), inset 0 0 20px rgba(201, 168, 76, 0.05);
+  pointer-events: none;
+}
+#whisper-toast.hidden {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-20px);
+  display: block !important;
+}
+#whisper-toast.whisper-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.whisper-header {
+  font-family: var(--font-heading);
+  font-size: 0.75rem;
+  color: rgba(201, 168, 76, 0.6);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.whisper-body {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  color: var(--cream);
+  line-height: 1.4;
+  font-style: italic;
+}
+.whisper-speaker {
+  color: var(--gold);
+  font-weight: bold;
+  font-style: normal;
+  margin-right: 4px;
+}
+
 /* ── Model Settings ── */
 .settings-panel {
   background: var(--panel-bg, #1a1a2e);

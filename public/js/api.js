@@ -306,4 +306,15 @@ export class GameAPI {
     if (!res.ok) throw new Error(`Failed to adjust sentiment (${res.status})`);
     return res.json();
   }
+
+  // ── Whisper (NPC-to-NPC overheard conversations) ───────────────
+  async triggerWhisper(npcA, npcB) {
+    const res = await fetch(`${this.baseUrl}/api/whisper`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ npcA, npcB }),
+    });
+    if (!res.ok) return { exchanges: [] };
+    return res.json();
+  }
 }

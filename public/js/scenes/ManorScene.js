@@ -5,6 +5,7 @@ import { initNPCMovement, updateNPCMovement } from '../npcMovement.js';
 import { updateTimedEvent, checkTimedEventTrigger, cancelTimedEvent, completeTimedEvent, restoreFledNPCs } from '../timedEvents.js';
 import { updateChase, maybeChaseOnWrongAccusation } from '../chase.js';
 import { initNPCApproach, updateNPCApproach, isNPCApproaching } from '../npcApproach.js';
+import { initNPCWhisper, updateNPCWhisper, resetWhisperCooldowns } from '../npcWhisper.js';
 
 /**
  * ManorScene — 2D manor with rooms, NPCs, and evidence.
@@ -70,6 +71,7 @@ export default class ManorScene extends Phaser.Scene {
     this._setupCamera(T);
     this._setupInput();
     initNPCApproach(this);
+    initNPCWhisper(this);
     this._createAmbientParticles();
 
     // Weather effects (noir fog by default)
@@ -309,6 +311,7 @@ export default class ManorScene extends Phaser.Scene {
     this.transitioning = false;
     this.tweens.add({ targets: this.nightOverlay, alpha: 0, duration: 1500, ease: 'Power2' });
     restoreFledNPCs(this);
+    resetWhisperCooldowns(this);
     window.setMusicMood?.('calm');
     await this._applyDayChanges(dayResult?.dayConfig);
   }
@@ -668,6 +671,7 @@ export default class ManorScene extends Phaser.Scene {
     updateLighting(this);
     this._handleInteractions();
     updateNPCApproach(this, this.game.loop.delta);
+    updateNPCWhisper(this, this.game.loop.delta);
     this._updateRoomLabel();
   }
 
