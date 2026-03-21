@@ -262,7 +262,8 @@ export function createDirectorTools(gameState: GameStateManager) {
 
         // Look up character name — use the ID capitalized as fallback
         const name = pos.id.charAt(0).toUpperCase() + pos.id.slice(1);
-        const floor = pos.floor ?? roomBounds.floor ?? 0;
+        // Always trust the room's configured floor when present to avoid impossible (room, floor) pairs
+        const floor = roomBounds.floor ?? pos.floor ?? 0;
         npcPositions.push({ id: pos.id, name, location: pos.room, x, y, floor });
         // Update NPC floor tracking
         gameState.setNPCFloor(pos.id, floor);
