@@ -651,7 +651,6 @@ export default class ManorScene extends Phaser.Scene {
   _updateFloorIndicator(floorNum) {
     const el = document.getElementById('hud-floor-indicator');
     if (!el) return;
-    const names = { '-1': 'B', '0': 'G', '1': '1F' };
     const labels = { '-1': 'Basement', '0': 'Ground Floor', '1': 'Upper Floor' };
     el.textContent = '🏠 ' + (labels[floorNum] ?? `Floor ${floorNum}`);
     el.title = labels[floorNum] ?? `Floor ${floorNum}`;
