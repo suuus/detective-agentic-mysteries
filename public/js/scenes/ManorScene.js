@@ -34,6 +34,7 @@ export default class ManorScene extends Phaser.Scene {
     // Multi-floor system
     this.currentFloor = 0; // 0 = ground, 1 = upper
     this._floorTransitioning = false;
+    this._stairCooldown = false; // Prevent ping-pong between floors
     this._floorObjects = { 0: [], 1: [] }; // Track objects per floor
     this._floorWalls = { 0: [], 1: [] };   // Track wall physics per floor
     this._floorFurniture = { 0: [], 1: [] }; // Track furniture physics per floor
@@ -50,12 +51,16 @@ export default class ManorScene extends Phaser.Scene {
       bedroom:     { name:"Clara's Bedroom", x:25, y:21, w:10, h:10, floor:'tile_carpet', floorNum: 0 },
       garden:      { name:'Garden',          x:12, y:21, w:12, h:10, floor:'tile_grass', floorNum: 0 },
       foyer:       { name:'Foyer',           x:12, y:1,  w:12, h:10, floor:'tile_floor', floorNum: 0 },
-      // Upper floor rooms (reuse same tile coordinate space)
+      // Upper floor rooms (reuse same tile coordinate space, matching ground floor blueprint)
       upper_hall:     { name:'Upper Landing', x:12, y:12, w:12, h:8,  floor:'tile_upper_floor', floorNum: 1 },
       upper_study:    { name:'Lord\'s Study', x:1,  y:12, w:10, h:8,  floor:'tile_carpet', floorNum: 1 },
+      gallery:        { name:'Gallery',       x:25, y:12, w:10, h:8,  floor:'tile_carpet', floorNum: 1 },
       upper_bedroom:  { name:'Master Bedroom',x:25, y:21, w:10, h:10, floor:'tile_carpet', floorNum: 1 },
       guest_bedroom:  { name:'Guest Bedroom', x:1,  y:1,  w:10, h:10, floor:'tile_carpet', floorNum: 1 },
       balcony:        { name:'Balcony',       x:12, y:1,  w:12, h:10, floor:'tile_floor', floorNum: 1 },
+      sitting_room:   { name:'Sitting Room',  x:1,  y:21, w:10, h:10, floor:'tile_carpet', floorNum: 1 },
+      dressing_room:  { name:'Dressing Room', x:25, y:1,  w:10, h:10, floor:'tile_carpet', floorNum: 1 },
+      upper_corridor: { name:'Upper Corridor',x:12, y:21, w:12, h:10, floor:'tile_upper_floor', floorNum: 1 },
     };
 
     // Doorways per floor
@@ -73,8 +78,12 @@ export default class ManorScene extends Phaser.Scene {
       1: [
         { x:17, y:10, w:2, h:4 }, // balcony <-> upper hall (vertical)
         { x:10, y:15, w:4, h:2 }, // upper study <-> upper hall (horizontal)
-        { x:23, y:25, w:4, h:2 }, // upper hall area <-> master bedroom (horizontal)
+        { x:23, y:15, w:4, h:2 }, // upper hall <-> gallery (horizontal)
         { x:10, y:5,  w:4, h:2 }, // guest bedroom <-> balcony (horizontal)
+        { x:23, y:5,  w:4, h:2 }, // balcony <-> dressing room (horizontal)
+        { x:17, y:19, w:2, h:4 }, // upper hall <-> upper corridor (vertical)
+        { x:10, y:25, w:4, h:2 }, // sitting room <-> upper corridor (horizontal)
+        { x:23, y:25, w:4, h:2 }, // upper corridor <-> master bedroom (horizontal)
       ],
     };
 
@@ -499,6 +508,15 @@ export default class ManorScene extends Phaser.Scene {
           const gy=d.y+dy, gx=d.x+dx;
           if(gy>=0&&gy<this.MAP_H&&gx>=0&&gx<this.MAP_W) grid[gy][gx]=false;
         }
+
+    // Clear stair tiles from wall grid — stairs must never be blocked
+    for (const stair of this.stairs) {
+      for (let sy=0; sy<stair.h; sy++)
+        for (let sx=0; sx<stair.w; sx++) {
+          const gy=stair.y+sy, gx=stair.x+sx;
+          if(gy>=0&&gy<this.MAP_H&&gx>=0&&gx<this.MAP_W) grid[gy][gx]=false;
+        }
+    }
 
     const neighbors = (x,y) => [[x-1,y],[x+1,y],[x,y-1],[x,y+1]];
     for (let y=0; y<this.MAP_H; y++)
@@ -995,6 +1013,7 @@ export default class ManorScene extends Phaser.Scene {
     const px = this.player.x;
     const py = this.player.y;
 
+    let insideAnyZone = false;
     for (const zone of this.stairZones) {
       if (zone.getData('fromFloor') !== this.currentFloor) continue;
 
@@ -1004,10 +1023,19 @@ export default class ManorScene extends Phaser.Scene {
       const hh = zone.height / 2;
 
       if (px > zx - hw && px < zx + hw && py > zy - hh && py < zy + hh) {
-        const toFloor = zone.getData('toFloor');
-        this._switchFloor(toFloor);
+        insideAnyZone = true;
+        if (!this._stairCooldown) {
+          const toFloor = zone.getData('toFloor');
+          this._stairCooldown = true;
+          this._switchFloor(toFloor);
+        }
         break;
       }
+    }
+
+    // Reset cooldown once player leaves all stair zones
+    if (!insideAnyZone) {
+      this._stairCooldown = false;
     }
   }
 

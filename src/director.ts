@@ -12,12 +12,16 @@ const MANOR_POSITIONS: Record<string, { x: [number,number], y: [number,number], 
   garden:       { x: [14,21], y: [23,28] },
   foyer:        { x: [14,21], y: [3,8]   },
   main_hall:    { x: [14,21], y: [14,17] },
-  // Upper floor rooms (floor: 1)
+  // Upper floor rooms (floor: 1) — mirrors ground floor blueprint
   upper_bedroom:  { x: [27,32], y: [23,28], floor: 1 },
   upper_study:    { x: [3,8],   y: [14,17], floor: 1 },
   upper_hall:     { x: [14,21], y: [14,17], floor: 1 },
+  gallery:        { x: [27,32], y: [14,17], floor: 1 },
   guest_bedroom:  { x: [3,8],   y: [3,8],   floor: 1 },
   balcony:        { x: [14,21], y: [3,8],   floor: 1 },
+  sitting_room:   { x: [3,8],   y: [23,28], floor: 1 },
+  dressing_room:  { x: [27,32], y: [3,8],   floor: 1 },
+  upper_corridor: { x: [14,21], y: [23,28], floor: 1 },
 };
 
 const CRUISE_POSITIONS: Record<string, { x: [number,number], y: [number,number], floor?: number }> = {
