@@ -1552,7 +1552,7 @@ app.post("/api/mystery/generate", async (_req, res) => {
       multiFloor: multiFloor || false,
       decorationCount: creativeAssets?.decorations?.length ?? 0,
       ambientPropCount: creativeAssets?.ambientProps?.length ?? 0,
-      wallTileCount: creativeAssets?.wallTiles?.length ?? 0,
+      wallTileCount: creativeAssets?.wallTile ? 1 : 0,
       palette: skeleton.visual,
     });
     res.write("data: [DONE]\n\n");
