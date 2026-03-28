@@ -97,6 +97,7 @@ export default class RandomManorScene extends Phaser.Scene {
     this._placeNPCs(T, world);
     initNPCMovement(this);
     this._placeEvidence(T, world);
+    this._placeCreativeAssets(T, world);
     this._setupPlayer(T);
     this._setupCamera(T);
     this._setupInput();
@@ -980,19 +981,109 @@ export default class RandomManorScene extends Phaser.Scene {
   }
 
   _createAmbientParticles() {
-    if (!this.textures.exists('dust')) {
+    const ca = window._generatedWorld?.creativeAssets;
+    const useCreative = ca?.particles && this.textures.exists('creative_particle');
+
+    if (!useCreative && !this.textures.exists('dust')) {
       const c = this.textures.createCanvas('dust', 2, 2);
       c.context.fillStyle = '#e8dcc8';
       c.context.fillRect(0, 0, 2, 2);
       c.refresh();
     }
-    this.add.particles(0, 0, 'dust', {
+
+    const texKey = useCreative ? 'creative_particle' : 'dust';
+    const p = ca?.particles || {};
+    this.add.particles(0, 0, texKey, {
       x: { min: 0, max: this.MAP_W * this.T },
       y: { min: 0, max: this.MAP_H * this.T },
-      lifespan: 6000, speed: { min: 3, max: 10 },
-      alpha: { start: 0, end: 0.2 }, scale: { start: 0.5, end: 1.5 },
-      frequency: 400, blendMode: 'ADD',
+      lifespan: p.lifespan || 6000,
+      speed: p.speed || { min: 3, max: 10 },
+      alpha: p.alpha || { start: 0, end: 0.2 },
+      scale: { start: 0.5, end: 1.5 },
+      frequency: p.frequency || 400,
+      blendMode: p.blendMode || 'ADD',
     }).setDepth(3);
+  }
+
+  /**
+   * Place AI-designed creative assets: room decorations, ambient props,
+   * and per-room atmosphere tints.
+   */
+  _placeCreativeAssets(T, world) {
+    const ca = world?.creativeAssets;
+    if (!ca) return;
+
+    // ── Room decorations ──
+    if (Array.isArray(ca.decorations)) {
+      for (const roomDecor of ca.decorations) {
+        const room = this.rooms[roomDecor.roomId];
+        if (!room) continue;
+        const floorNum = this.multiFloor ? (room.floorNum ?? 0) : 0;
+
+        for (const item of (roomDecor.items || [])) {
+          const texKey = item._texKey;
+          if (!texKey || !this.textures.exists(texKey)) continue;
+
+          // Place inside room interior with padding
+          const dx = room.x + 2 + Math.floor(Math.random() * Math.max(1, room.w - 4));
+          const dy = room.y + 2 + Math.floor(Math.random() * Math.max(1, room.h - 4));
+          const img = this.add.image(dx * T + T / 2, dy * T + T / 2, texKey).setDepth(2);
+
+          if (this.multiFloor) {
+            this._floorObjects[floorNum].push(img);
+          }
+        }
+      }
+    }
+
+    // ── Ambient props — scattered in random rooms ──
+    if (Array.isArray(ca.ambientProps)) {
+      const roomList = Object.values(this.rooms);
+      for (const prop of ca.ambientProps) {
+        const texKey = prop._texKey;
+        if (!texKey || !this.textures.exists(texKey)) continue;
+        const count = Math.min(prop.count || 2, 8);
+
+        for (let i = 0; i < count; i++) {
+          const room = roomList[Math.floor(Math.random() * roomList.length)];
+          const floorNum = this.multiFloor ? (room.floorNum ?? 0) : 0;
+          const px = room.x + 1 + Math.floor(Math.random() * Math.max(1, room.w - 2));
+          const py = room.y + 1 + Math.floor(Math.random() * Math.max(1, room.h - 2));
+          const img = this.add.image(px * T + T / 2, py * T + T / 2, texKey)
+            .setDepth(1).setAlpha(0.7);
+
+          if (this.multiFloor) {
+            this._floorObjects[floorNum].push(img);
+          }
+        }
+      }
+    }
+
+    // ── Per-room atmosphere tints ──
+    if (ca.roomAmbiance && typeof ca.roomAmbiance === 'object') {
+      for (const [roomId, amb] of Object.entries(ca.roomAmbiance)) {
+        const room = this.rooms[roomId];
+        if (!room || !amb) continue;
+        const tintCol = parseInt((amb.tintColor || '#000000').replace('#', ''), 16) || 0;
+        const tintAlpha = Math.min(Math.max(amb.tintAlpha || 0.05, 0), 0.15);
+        const floorNum = this.multiFloor ? (room.floorNum ?? 0) : 0;
+
+        const rect = this.add.rectangle(
+          (room.x + room.w / 2) * T,
+          (room.y + room.h / 2) * T,
+          room.w * T, room.h * T,
+          tintCol, 0
+        ).setDepth(1).setAlpha(tintAlpha);
+
+        if (this.multiFloor) {
+          this._floorObjects[floorNum].push(rect);
+        }
+      }
+    }
+
+    const decoCount = ca.decorations?.reduce((n, d) => n + (d.items?.length || 0), 0) || 0;
+    const propCount = ca.ambientProps?.reduce((n, p) => n + (p.count || 0), 0) || 0;
+    console.log(`[Creative] Placed ${decoCount} decorations, ~${propCount} ambient props`);
   }
 
   // ── UPDATE ─────────────────────────────────────────────────

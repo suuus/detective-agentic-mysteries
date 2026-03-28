@@ -14,6 +14,8 @@ import { CRUISE_CONFIG } from "./src/levels/cruise.js";
 import { CRUISE_DIRECTOR_PROMPT } from "./src/levels/cruise-director.js";
 import { SKELETON_PROMPT, buildCharacterPrompt, buildDirectorPromptRequest } from "./src/mystery-generator.js";
 import type { GeneratedMystery } from "./src/mystery-generator.js";
+import { buildCreativePrompt, getDefaultCreativeAssets } from "./src/creative-agent.js";
+import type { CreativeAssets } from "./src/creative-agent.js";
 
 let activeLevel: 'manor' | 'cruise' | 'random' = 'manor';
 let generatedMystery: GeneratedMystery | null = null;
@@ -106,6 +108,7 @@ const modelSettings = {
   forensics: DEFAULT_MODEL,
   narrator: DEFAULT_MODEL,
   profiler: DEFAULT_MODEL,
+  creative: DEFAULT_MODEL,
 };
 
 // ── Game settings ────────────────────────────────────────────────
@@ -1234,7 +1237,30 @@ app.post("/api/mystery/generate", async (_req, res) => {
     }, 60_000);
     const directorPrompt = dirResult?.data?.content ?? "";
 
-    // ── Step 4: Compute room layout, positions, sentiments ──
+    // ── Step 4: Creative Agency — generate rich visual assets ──
+    sendStatus("🎨 Designing visual atmosphere and decorations...");
+    let creativeAssets: CreativeAssets;
+    try {
+      const creativePrompt = buildCreativePrompt({
+        title: skeleton.title,
+        setting: skeleton.setting,
+        settingTheme: skeleton.settingTheme || 'noir',
+        rooms: skeleton.rooms.map((r: any) => ({ id: r.id, name: r.name || r.id })),
+        visual: skeleton.visual,
+      });
+      const creativeResult = await architect.sendAndWait({
+        prompt: creativePrompt
+      }, 60_000);
+      const creativeJson = extractJSON(creativeResult?.data?.content ?? "");
+      creativeAssets = JSON.parse(creativeJson) as CreativeAssets;
+    } catch (err: any) {
+      console.warn("Creative agent failed, using defaults:", err.message);
+      creativeAssets = getDefaultCreativeAssets(
+        skeleton.rooms.map((r: any) => ({ id: r.id, name: r.name || r.id }))
+      );
+    }
+
+    // ── Step 5: Compute room layout, positions, sentiments ──
     sendStatus("🗺️ Building the world...");
 
     const layoutType = skeleton.visual?.roomLayout || 'grid';
@@ -1428,6 +1454,7 @@ app.post("/api/mystery/generate", async (_req, res) => {
       rooms,
       stairs: stairs.length > 0 ? stairs : undefined,
       multiFloor: multiFloor || undefined,
+      creativeAssets,
       correctSuspect: skeleton.correctSuspect,
       keyEvidence: skeleton.keyEvidence,
       motiveKeywords: skeleton.motiveKeywords,
@@ -1497,6 +1524,7 @@ app.get("/api/mystery/rooms", (_req, res) => {
     evidencePositions: generatedMystery.evidencePositions,
     stairs: generatedMystery.stairs || [],
     multiFloor: generatedMystery.multiFloor || false,
+    creativeAssets: generatedMystery.creativeAssets || null,
   });
 });
 

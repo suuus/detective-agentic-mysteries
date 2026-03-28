@@ -1,4 +1,5 @@
 import type { Evidence, NPCSentiment } from "./gameState.js";
+import type { CreativeAssets } from "./creative-agent.js";
 
 export interface GeneratedMystery {
   title: string;
@@ -13,6 +14,7 @@ export interface GeneratedMystery {
   rooms: { id: string; name: string; x: number; y: number; w: number; h: number; floor: string; size?: string; floorNum?: number }[];
   stairs?: { x: number; y: number; w: number; h: number; fromFloor: number; toFloor: number }[];
   multiFloor?: boolean;
+  creativeAssets?: CreativeAssets;
   correctSuspect: string;
   keyEvidence: string[];
   motiveKeywords: string[];

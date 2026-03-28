@@ -30,6 +30,7 @@ export default class RandomBootScene extends Phaser.Scene {
     this._genEvidence();
     this._genCrimeScene();
     this._genStairs();
+    this._genCreativeAssets();
 
     this.scene.start('RandomManorScene');
   }
@@ -44,6 +45,32 @@ export default class RandomBootScene extends Phaser.Scene {
     fn(g, w, h);
     g.generateTexture(key, w, h);
     g.destroy();
+  }
+
+  /** Execute an array of drawing instructions on a Phaser Graphics object. */
+  _execDraw(g, ops) {
+    if (!Array.isArray(ops)) return;
+    for (const op of ops) {
+      if (!op || !op.op) continue;
+      const c = this._hex(op.color);
+      switch (op.op) {
+        case 'fill':
+          g.fillStyle(c); g.fillRect(op.x, op.y, op.w, op.h);
+          break;
+        case 'circle':
+          g.fillStyle(c); g.fillCircle(op.x, op.y, op.r);
+          break;
+        case 'line':
+          g.lineStyle(op.width || 1, c); g.lineBetween(op.x1, op.y1, op.x2, op.y2);
+          break;
+        case 'tri':
+          g.fillStyle(c); g.fillTriangle(op.x1, op.y1, op.x2, op.y2, op.x3, op.y3);
+          break;
+        case 'stroke':
+          g.lineStyle(op.width || 1, c); g.strokeRect(op.x, op.y, op.w, op.h);
+          break;
+      }
+    }
   }
 
   _genPlayer() {
@@ -98,11 +125,16 @@ export default class RandomBootScene extends Phaser.Scene {
     this._tex('tile_grass', 32, 32, g => { g.fillStyle(0x2d5a1e); g.fillRect(0,0,32,32); g.fillStyle(0x3a6a28); g.fillRect(4,4,6,3); g.fillRect(18,14,8,4); g.fillRect(8,24,6,3); });
     this._tex('tile_stone', 32, 32, g => { g.fillStyle(0x6b6b6b); g.fillRect(0,0,32,32); g.lineStyle(1,0x555555); g.strokeRect(0,0,16,16); g.strokeRect(16,0,16,16); g.strokeRect(8,16,16,16); });
 
-    // Walls use AI-provided colors
-    this._tex('tile_wall', 32, 32, g => {
-      g.fillStyle(wallCol); g.fillRect(0,0,32,32);
-      g.fillStyle(wallAcc); g.fillRect(2,2,28,12); g.fillRect(2,18,28,12);
-    });
+    // Walls — use AI-designed wall tile if creative assets provide one, else palette colors
+    const ca = window._generatedWorld?.creativeAssets;
+    if (ca?.wallTile?.draw?.length > 0) {
+      this._tex('tile_wall', 32, 32, g => this._execDraw(g, ca.wallTile.draw));
+    } else {
+      this._tex('tile_wall', 32, 32, g => {
+        g.fillStyle(wallCol); g.fillRect(0,0,32,32);
+        g.fillStyle(wallAcc); g.fillRect(2,2,28,12); g.fillRect(2,18,28,12);
+      });
+    }
   }
 
   _genFurniture() {
@@ -268,5 +300,54 @@ export default class RandomBootScene extends Phaser.Scene {
       g.lineStyle(1, 0x322a1e);
       for(let i=0;i<5;i++){ g.beginPath(); g.moveTo(0,6+i*6); g.lineTo(32,6+i*6); g.strokePath(); }
     });
+  }
+
+  /**
+   * Generate textures from the Creative Agency's AI-designed assets.
+   * Each decoration and ambient prop becomes a named Phaser texture
+   * that RandomManorScene can place in the world.
+   */
+  _genCreativeAssets() {
+    const ca = window._generatedWorld?.creativeAssets;
+    if (!ca) return;
+
+    // Generate decoration textures — keyed by "decor_{roomId}_{index}"
+    let decoIdx = 0;
+    if (Array.isArray(ca.decorations)) {
+      for (const roomDecor of ca.decorations) {
+        if (!roomDecor?.items) continue;
+        for (const item of roomDecor.items) {
+          if (!item?.draw?.length) continue;
+          const w = Math.min(Math.max(item.width || 32, 8), 64);
+          const h = Math.min(Math.max(item.height || 32, 8), 64);
+          const key = `decor_${decoIdx++}`;
+          item._texKey = key; // attach generated key for scene to reference
+          this._tex(key, w, h, g => this._execDraw(g, item.draw));
+        }
+      }
+    }
+
+    // Generate ambient prop textures — keyed by "prop_{index}"
+    if (Array.isArray(ca.ambientProps)) {
+      ca.ambientProps.forEach((prop, i) => {
+        if (!prop?.draw?.length) return;
+        const w = Math.min(Math.max(prop.width || 12, 4), 32);
+        const h = Math.min(Math.max(prop.height || 12, 4), 32);
+        const key = `prop_${i}`;
+        prop._texKey = key;
+        this._tex(key, w, h, g => this._execDraw(g, prop.draw));
+      });
+    }
+
+    // Generate particle texture from creative config
+    if (ca.particles) {
+      const pColor = this._hex(ca.particles.color || '#e8dcc8');
+      const pSize = Math.min(Math.max(ca.particles.size || 2, 1), 6);
+      this._tex('creative_particle', pSize * 2, pSize * 2, g => {
+        g.fillStyle(pColor); g.fillCircle(pSize, pSize, pSize);
+      });
+    }
+
+    console.log(`[Creative] Generated ${decoIdx} decoration textures, ${ca.ambientProps?.length || 0} prop textures`);
   }
 }
