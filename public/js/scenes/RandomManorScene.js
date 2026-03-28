@@ -817,7 +817,9 @@ export default class RandomManorScene extends Phaser.Scene {
         });
         if (res.evidence) this._showPopup(res.evidence);
         window.inventoryManager?.refresh();
-        window.playSting?.('evidence');
+        if (res.collected) {
+          window.playSting?.('evidence');
+        }
         if (res.evidence) {
           window.gameAPI?.narrate('evidence_found', `Found: ${res.evidence.name} — ${res.evidence.detail}`).then(r => {
             if (r.narration) this._showNarration(r.narration);

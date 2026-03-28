@@ -767,7 +767,9 @@ export default class CruiseManorScene extends Phaser.Scene {
         });
         if (res.evidence) this._showPopup(res.evidence);
         window.inventoryManager?.refresh();
-        window.playSting?.('evidence');
+        if (res.collected) {
+          window.playSting?.('evidence');
+        }
         // Narrate evidence discovery
         if (res.evidence) {
           window.gameAPI?.narrate('evidence_found', `Found: ${res.evidence.name} — ${res.evidence.detail}`).then(r => {
