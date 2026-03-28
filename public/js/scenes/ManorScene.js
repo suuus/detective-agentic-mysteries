@@ -89,8 +89,8 @@ export default class ManorScene extends Phaser.Scene {
 
     // Staircase definitions — where stairs are on each floor
     this.stairs = [
-      { x: 24, y: 14, w: 2, h: 2, fromFloor: 0, toFloor: 1, exitX: 24, exitY: 14 },
-      { x: 24, y: 14, w: 2, h: 2, fromFloor: 1, toFloor: 0, exitX: 24, exitY: 14 },
+      { x: 24, y: 14, w: 2, h: 2, fromFloor: 0, toFloor: 1 },
+      { x: 24, y: 14, w: 2, h: 2, fromFloor: 1, toFloor: 0 },
     ];
 
     this.MAP_W = 36;
@@ -557,8 +557,6 @@ export default class ManorScene extends Phaser.Scene {
       );
       zone.setData('fromFloor', stair.fromFloor);
       zone.setData('toFloor', stair.toFloor);
-      zone.setData('exitX', stair.exitX);
-      zone.setData('exitY', stair.exitY);
       this.stairZones.push(zone);
     }
   }
@@ -624,10 +622,10 @@ export default class ManorScene extends Phaser.Scene {
     const T = this.T;
     const cam = this.cameras.main;
 
-    // Create fade overlay
+    // Create fade overlay (screen-space via setScrollFactor(0), so use viewport center)
     const fadeRect = this.add.rectangle(
-      cam.scrollX + cam.width / 2,
-      cam.scrollY + cam.height / 2,
+      cam.width / 2,
+      cam.height / 2,
       cam.width * 2,
       cam.height * 2,
       0x000000, 0
