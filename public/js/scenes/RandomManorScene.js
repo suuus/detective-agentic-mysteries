@@ -1299,7 +1299,7 @@ export default class RandomManorScene extends Phaser.Scene {
 
     // Gather all doors for the grid (flatten for multi-floor)
     const allDoors = this.multiFloor
-      ? Object.values(this.doors).flat()
+      ? Object.values(this.doors).filter(Boolean).flat()
       : this.doors;
 
     const grid = Array.from({length: this.MAP_H}, () => Array(this.MAP_W).fill(true));

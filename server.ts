@@ -1315,16 +1315,86 @@ app.post("/api/mystery/generate", async (_req, res) => {
       return placed;
     }
 
-    const rooms = generateLayout(skeleton.rooms.slice(0, 8), layoutType);
+    let rooms = generateLayout(skeleton.rooms.slice(0, 8), layoutType);
+
+    // ── Multi-floor support ──────────────────────────────────
+    // Decide if multi-floor makes sense: ≥6 rooms and non-linear layout
+    const eligibleForMultiFloor = rooms.length >= 6 && layoutType !== 'corridor';
+    let stairs: any[] = [];
+    let multiFloor = false;
+
+    if (eligibleForMultiFloor) {
+      // All original rooms become floor 0
+      rooms = rooms.map((r: any) => ({ ...r, floorNum: 0 }));
+
+      // Create upper floor rooms mirroring ground floor positions
+      const upperNames = [
+        'Upper Gallery', 'Master Suite', 'Guest Chamber', 'Study Loft',
+        'Sitting Room', 'Balcony', 'Dressing Room', 'Upper Hall',
+      ];
+      const upperTextures = [
+        'tile_carpet', 'tile_carpet_blue', 'tile_carpet_red', 'tile_floor',
+        'tile_carpet', 'tile_floor', 'tile_carpet', 'tile_carpet',
+      ];
+      const upperRooms = rooms.map((r: any, i: number) => ({
+        ...r,
+        id: 'upper_' + r.id,
+        name: upperNames[i % upperNames.length],
+        floor: upperTextures[i % upperTextures.length],
+        floorNum: 1,
+      }));
+
+      // Move last 2 characters to upper floor rooms
+      const charsToMove = fullCharacters.slice(-2);
+      for (const char of charsToMove) {
+        const groundRoom = rooms.find((r: any) => r.id === char.location);
+        if (groundRoom) {
+          char.location = 'upper_' + groundRoom.id;
+        }
+      }
+
+      // Place stairs inside the first room — guaranteed to exist on both floors
+      const stairRoom = rooms[0];
+      const stairX = stairRoom.x + stairRoom.w - 3;
+      const stairY = stairRoom.y + Math.floor(stairRoom.h / 2) - 1;
+      stairs = [
+        { x: stairX, y: stairY, w: 2, h: 2, fromFloor: 0, toFloor: 1 },
+        { x: stairX, y: stairY, w: 2, h: 2, fromFloor: 1, toFloor: 0 },
+      ];
+
+      rooms = [...rooms, ...upperRooms];
+      multiFloor = true;
+    }
 
     // Assign evidence positions within their rooms
-    const evidencePositions: Record<string, { x: number; y: number }> = {};
+    const evidencePositions: Record<string, { x: number; y: number; floor?: number }> = {};
     for (const ev of skeleton.evidence) {
       const room = rooms.find((r: any) => r.id === ev.location) || rooms[0];
       evidencePositions[ev.id] = {
         x: room.x + 2 + Math.floor(Math.random() * (room.w - 4)),
         y: room.y + 2 + Math.floor(Math.random() * (room.h - 4)),
+        ...(room.floorNum ? { floor: room.floorNum } : {}),
       };
+    }
+
+    // Move 1-2 evidence items to upper floor when multi-floor is active
+    if (multiFloor) {
+      const movableEvidence = skeleton.evidence.filter((ev: any) => !skeleton.keyEvidence.includes(ev.id));
+      const evToMove = movableEvidence.slice(-2);
+      for (const ev of evToMove) {
+        const currentRoom = rooms.find((r: any) => r.id === ev.location && (r.floorNum ?? 0) === 0);
+        if (currentRoom) {
+          const upperRoom = rooms.find((r: any) => r.id === 'upper_' + currentRoom.id);
+          if (upperRoom) {
+            ev.location = upperRoom.id;
+            evidencePositions[ev.id] = {
+              x: upperRoom.x + 2 + Math.floor(Math.random() * (upperRoom.w - 4)),
+              y: upperRoom.y + 2 + Math.floor(Math.random() * (upperRoom.h - 4)),
+              floor: 1,
+            };
+          }
+        }
+      }
     }
 
     // Build initial sentiments
@@ -1356,6 +1426,8 @@ app.post("/api/mystery/generate", async (_req, res) => {
       evidence: skeleton.evidence,
       evidencePositions,
       rooms,
+      stairs: stairs.length > 0 ? stairs : undefined,
+      multiFloor: multiFloor || undefined,
       correctSuspect: skeleton.correctSuspect,
       keyEvidence: skeleton.keyEvidence,
       motiveKeywords: skeleton.motiveKeywords,
@@ -1423,6 +1495,8 @@ app.get("/api/mystery/rooms", (_req, res) => {
       color: (e as any).color || null,
     })),
     evidencePositions: generatedMystery.evidencePositions,
+    stairs: generatedMystery.stairs || [],
+    multiFloor: generatedMystery.multiFloor || false,
   });
 });
 
@@ -1504,6 +1578,7 @@ app.post("/api/level/select", async (req, res) => {
       ALL_ROOM_POSITIONS[room.id] = {
         x: [room.x + 1, room.x + room.w - 2],
         y: [room.y + 1, room.y + room.h - 2],
+        ...(room.floorNum ? { floor: room.floorNum } : {}),
       };
       // Also register by name (Director may use either)
       ALL_ROOM_POSITIONS[room.name.toLowerCase().replace(/\s+/g, '_')] = ALL_ROOM_POSITIONS[room.id];
@@ -1518,6 +1593,16 @@ app.post("/api/level/select", async (req, res) => {
       initialSentiments: generatedMystery.initialSentiments,
       winMessage: generatedMystery.winMessage,
     });
+
+    // Set initial NPC floor assignments for multi-floor generated mysteries
+    if (generatedMystery.multiFloor) {
+      for (const char of generatedMystery.characters) {
+        const charRoom = generatedMystery.rooms.find(r => r.id === char.location);
+        if (charRoom && charRoom.floorNum) {
+          gameState.setNPCFloor(char.id, charRoom.floorNum);
+        }
+      }
+    }
   }
 
   res.json({ level: levelId, message: `Level set to: ${levelId}` });

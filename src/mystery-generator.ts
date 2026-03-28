@@ -9,8 +9,10 @@ export interface GeneratedMystery {
   visual?: { wallColor: string; wallAccent: string; accentColor: string; ambientTint: string; furnitureStyle: string; roomLayout: string; weather: string };
   characters: { id: string; name: string; role: string; location: string; motive: string; secret: string; alibi: string; personality: string; isKiller: boolean; systemPrompt: string; spriteColors?: { body: string; hair: string } }[];
   evidence: (Evidence & { color?: string })[];
-  evidencePositions: Record<string, { x: number; y: number }>;
-  rooms: { id: string; name: string; x: number; y: number; w: number; h: number; floor: string; size?: string }[];
+  evidencePositions: Record<string, { x: number; y: number; floor?: number }>;
+  rooms: { id: string; name: string; x: number; y: number; w: number; h: number; floor: string; size?: string; floorNum?: number }[];
+  stairs?: { x: number; y: number; w: number; h: number; fromFloor: number; toFloor: number }[];
+  multiFloor?: boolean;
   correctSuspect: string;
   keyEvidence: string[];
   motiveKeywords: string[];

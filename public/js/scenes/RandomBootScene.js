@@ -29,6 +29,7 @@ export default class RandomBootScene extends Phaser.Scene {
     this._genNPCs();
     this._genEvidence();
     this._genCrimeScene();
+    this._genStairs();
 
     this.scene.start('RandomManorScene');
   }
@@ -224,6 +225,48 @@ export default class RandomBootScene extends Phaser.Scene {
         g.fillTriangle(x, 0, x+4, 4, x+8, 0);
         g.fillTriangle(x, 8, x+4, 4, x+8, 8);
       }
+    });
+  }
+
+  _genStairs() {
+    // Only generate stair textures if the world has multi-floor support
+    const world = window._generatedWorld;
+    if (!world?.multiFloor) return;
+
+    // Staircase tile going up (for ground floor)
+    this._tex('tile_stairs', 32, 32, (g) => {
+      g.fillStyle(0x5c3a1e); g.fillRect(0,0,32,32);
+      g.fillStyle(0x4a2e16);
+      for (let i = 0; i < 5; i++) {
+        g.fillRect(0, i * 6 + 2, 32, 4);
+        g.fillStyle(0x6b4423); g.fillRect(0, i * 6, 32, 2);
+        g.fillStyle(0x4a2e16);
+      }
+      g.fillStyle(0xc9a84c, 0.7);
+      g.fillTriangle(16, 4, 10, 14, 22, 14);
+      g.fillRect(13, 14, 6, 8);
+    });
+
+    // Staircase tile going down (for upper floor)
+    this._tex('tile_stairs_down', 32, 32, (g) => {
+      g.fillStyle(0x5c3a1e); g.fillRect(0,0,32,32);
+      g.fillStyle(0x4a2e16);
+      for (let i = 0; i < 5; i++) {
+        g.fillRect(0, i * 6 + 2, 32, 4);
+        g.fillStyle(0x6b4423); g.fillRect(0, i * 6, 32, 2);
+        g.fillStyle(0x4a2e16);
+      }
+      g.fillStyle(0xc9a84c, 0.7);
+      g.fillTriangle(16, 28, 10, 18, 22, 18);
+      g.fillRect(13, 10, 6, 8);
+    });
+
+    // Upper floor tile (slightly different shade)
+    this._tex('tile_upper_floor', 32, 32, (g) => {
+      g.fillStyle(0x3a2e22); g.fillRect(0,0,32,32);
+      g.lineStyle(1, 0x302518); g.strokeRect(0,0,32,32);
+      g.lineStyle(1, 0x322a1e);
+      for(let i=0;i<5;i++){ g.beginPath(); g.moveTo(0,6+i*6); g.lineTo(32,6+i*6); g.strokePath(); }
     });
   }
 }
