@@ -826,7 +826,7 @@ app.get("/api/floor", (_req, res) => {
 
 app.post("/api/floor", (req, res) => {
   const { floor } = req.body;
-  if (typeof floor !== 'number' || floor < -1 || floor > 1) {
+  if (typeof floor !== 'number' || !Number.isFinite(floor) || !Number.isInteger(floor) || floor < -1 || floor > 1) {
     res.status(400).json({ error: "Invalid floor. Use -1 (basement), 0 (ground), or 1 (upper)." });
     return;
   }
