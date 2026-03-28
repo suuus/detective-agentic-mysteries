@@ -12,7 +12,7 @@ import { characters } from "./src/characters/index.js";
 import { cruiseCharacters } from "./src/characters/cruise/index.js";
 import { CRUISE_CONFIG } from "./src/levels/cruise.js";
 import { CRUISE_DIRECTOR_PROMPT } from "./src/levels/cruise-director.js";
-import { SKELETON_PROMPT, buildCharacterPrompt, buildDirectorPromptRequest } from "./src/mystery-generator.js";
+import { buildSkeletonPrompt, buildCharacterPrompt, buildDirectorPromptRequest } from "./src/mystery-generator.js";
 import type { GeneratedMystery } from "./src/mystery-generator.js";
 import { buildCreativePrompt, getDefaultCreativeAssets } from "./src/creative-agent.js";
 import type { CreativeAssets } from "./src/creative-agent.js";
@@ -1203,10 +1203,7 @@ app.post("/api/mystery/generate", async (_req, res) => {
 
     // ── Step 1: Generate skeleton ──
     sendStatus("🎭 Designing the crime scene and suspects...");
-    let skeletonPrompt = SKELETON_PROMPT;
-    if (previousSettings.length > 0) {
-      skeletonPrompt += `\n\nIMPORTANT: The following settings have ALREADY been used. You MUST choose something COMPLETELY DIFFERENT:\n- ${previousSettings.join('\n- ')}\n\nBe creative! Pick a totally new setting, theme, and cast of characters.`;
-    }
+    const skeletonPrompt = buildSkeletonPrompt(previousSettings);
     const skeletonResult = await architect.sendAndWait({ prompt: skeletonPrompt }, 90_000);
     const skeletonJson = extractJSON(skeletonResult?.data?.content ?? "");
     const skeleton = JSON.parse(skeletonJson);
@@ -1237,10 +1234,22 @@ app.post("/api/mystery/generate", async (_req, res) => {
     }, 60_000);
     const directorPrompt = dirResult?.data?.content ?? "";
 
-    // ── Step 4: Creative Agency — generate rich visual assets ──
+    // ── Step 4: Creative Agency — fresh session to avoid context pollution ──
     sendStatus("🎨 Designing visual atmosphere and decorations...");
     let creativeAssets: CreativeAssets;
+    let creativeSession;
     try {
+      try { await client.deleteSession("blackwood-creative"); } catch {}
+      creativeSession = await client.createSession({
+        sessionId: "blackwood-creative",
+        model: modelSettings.architect,
+        streaming: false,
+        tools: [],
+        onPermissionRequest: approveAll,
+        infiniteSessions: { enabled: false },
+        systemMessage: { mode: "replace", content: "You are a visual artist for a 2D pixel-art game. Output valid JSON only — no markdown, no explanations, no extra text." },
+      });
+
       const creativePrompt = buildCreativePrompt({
         title: skeleton.title,
         setting: skeleton.setting,
@@ -1248,16 +1257,39 @@ app.post("/api/mystery/generate", async (_req, res) => {
         rooms: skeleton.rooms.map((r: any) => ({ id: r.id, name: r.name || r.id })),
         visual: skeleton.visual,
       });
-      const creativeResult = await architect.sendAndWait({
-        prompt: creativePrompt
-      }, 60_000);
-      const creativeJson = extractJSON(creativeResult?.data?.content ?? "");
+      const creativeResult = await creativeSession.sendAndWait({ prompt: creativePrompt }, 90_000);
+      const rawContent = creativeResult?.data?.content ?? "";
+      console.log(`  Creative agent raw output length: ${rawContent.length} chars`);
+      const creativeJson = extractJSON(rawContent);
       creativeAssets = JSON.parse(creativeJson) as CreativeAssets;
+
+      // Validate and normalize roomIds to match actual skeleton room IDs
+      const validRoomIds = new Set(skeleton.rooms.map((r: any) => r.id));
+      if (Array.isArray(creativeAssets.decorations)) {
+        // Drop decorations for rooms that don't exist (AI hallucinated IDs)
+        creativeAssets.decorations = creativeAssets.decorations.filter((d: any) => {
+          if (!validRoomIds.has(d.roomId)) {
+            console.warn(`  Creative: dropping decorations for unknown room "${d.roomId}"`);
+            return false;
+          }
+          return true;
+        });
+        // If AI produced no valid decorations at all, spread them across real rooms
+        if (creativeAssets.decorations.length === 0) {
+          console.warn("  Creative: no valid room decorations after ID normalization");
+        }
+      }
+      console.log(`  Creative agent: ${creativeAssets.decorations?.length ?? 0} room decoration groups, ${creativeAssets.ambientProps?.length ?? 0} ambient props`);
     } catch (err: any) {
-      console.warn("Creative agent failed, using defaults:", err.message);
+      console.warn("  Creative agent failed, using defaults:", err.message);
       creativeAssets = getDefaultCreativeAssets(
         skeleton.rooms.map((r: any) => ({ id: r.id, name: r.name || r.id }))
       );
+    } finally {
+      if (creativeSession) {
+        try { await creativeSession.disconnect(); } catch {}
+        try { await client.deleteSession("blackwood-creative"); } catch {}
+      }
     }
 
     // ── Step 5: Compute room layout, positions, sentiments ──
