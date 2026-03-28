@@ -123,7 +123,7 @@ document.querySelectorAll('.level-btn').forEach(btn => {
         }
       });
       if (genLog) genLog.innerHTML = '';
-      if (genSubtitle) genSubtitle.textContent = 'Your AI agents are designing a unique mystery…';
+      if (genSubtitle) genSubtitle.textContent = 'Your AI agents are designing a unique mystery...';
 
       overlay.classList.remove('hidden');
       levelSelect.classList.add('hidden');
@@ -144,7 +144,7 @@ document.querySelectorAll('.level-btn').forEach(btn => {
         el.classList.remove('active','done');
         if (state === 'active') {
           el.classList.add('active');
-          el.querySelector('.gen-step-state').textContent = 'working…';
+          el.querySelector('.gen-step-state').textContent = 'working...';
         } else if (state === 'done') {
           el.classList.add('done');
           el.querySelector('.gen-step-state').textContent = '✓ done';
@@ -194,7 +194,7 @@ document.querySelectorAll('.level-btn').forEach(btn => {
             }
 
           } else if (phase === 'character_done') {
-            logEntry(`✅ ${update.characterName} — ${update.characterRole}`, 'entry-data');
+            logEntry(`✅ ${update.characterName} - ${update.characterRole}`, 'entry-data');
 
           } else if (phase === 'director_done') {
             setStepState('director', 'done');
@@ -203,13 +203,13 @@ document.querySelectorAll('.level-btn').forEach(btn => {
             setStepState('creative', 'done');
             if (update.palette) {
               const p = update.palette;
-              logEntry(`🎨 Style: ${p.furnitureStyle || '—'} | Weather: ${p.weather || '—'} | Layout: ${p.roomLayout || '—'}`, 'entry-data');
+              logEntry(`🎨 Style: ${p.furnitureStyle || '-'} | Weather: ${p.weather || '-'} | Layout: ${p.roomLayout || '-'}`, 'entry-data');
             }
 
           } else if (phase === 'complete') {
             setStepState('world', 'done');
-            logEntry(`\n🎉 "${update.title}" is ready — ${update.suspects} suspects, ${update.evidenceCount} clues`, 'entry-complete');
-            if (genSubtitle) genSubtitle.textContent = `"${update.title}" — entering the scene…`;
+            logEntry(`🎉 "${update.title}" is ready -- ${update.suspects} suspects, ${update.evidenceCount} clues`, 'entry-complete');
+            if (genSubtitle) genSubtitle.textContent = `"${update.title}" -- entering the scene...`;
 
           } else if (phase === 'error' || update.error) {
             logEntry(update.status || 'Generation failed', 'entry-error');
