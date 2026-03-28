@@ -208,6 +208,14 @@ document.querySelectorAll('.level-btn').forEach(btn => {
 
           } else if (phase === 'complete') {
             setStepState('world', 'done');
+            // Show what creative assets were assembled into the world
+            if (update.decorationCount > 0 || update.ambientPropCount > 0) {
+              logEntry(`🎨 Creative assets applied: ${update.decorationCount} room decoration groups, ${update.ambientPropCount} ambient props${update.wallTileCount > 0 ? ', ' + update.wallTileCount + ' wall tile styles' : ''}`, 'entry-data');
+            }
+            if (update.roomCount) {
+              const floorNote = update.multiFloor ? ` across 2 floors` : '';
+              logEntry(`🏠 ${update.roomCount} rooms placed${floorNote}`, 'entry-data');
+            }
             logEntry(`🎉 "${update.title}" is ready -- ${update.suspects} suspects, ${update.evidenceCount} clues`, 'entry-complete');
             if (genSubtitle) genSubtitle.textContent = `"${update.title}" -- entering the scene...`;
 

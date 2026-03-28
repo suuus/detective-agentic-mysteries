@@ -1522,7 +1522,21 @@ app.post("/api/mystery/generate", async (_req, res) => {
     await architect.disconnect();
     try { await client.deleteSession("blackwood-architect"); } catch {}
 
-    sendEvent({ phase: 'complete', status: `✅ "${skeleton.title}" is ready!`, title: skeleton.title, setting: skeleton.setting, suspects: fullCharacters.length, evidenceCount: skeleton.evidence.length, theme: skeleton.settingTheme });
+    sendEvent({
+      phase: 'complete',
+      status: `✅ "${skeleton.title}" is ready!`,
+      title: skeleton.title,
+      setting: skeleton.setting,
+      suspects: fullCharacters.length,
+      evidenceCount: skeleton.evidence.length,
+      theme: skeleton.settingTheme,
+      roomCount: rooms.length,
+      multiFloor: multiFloor || false,
+      decorationCount: creativeAssets?.decorations?.length ?? 0,
+      ambientPropCount: creativeAssets?.ambientProps?.length ?? 0,
+      wallTileCount: creativeAssets?.wallTiles?.length ?? 0,
+      palette: skeleton.visual,
+    });
     res.write("data: [DONE]\n\n");
     res.end();
 
