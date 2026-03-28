@@ -664,8 +664,6 @@ export default class RandomManorScene extends Phaser.Scene {
       );
       zone.setData('fromFloor', stair.fromFloor);
       zone.setData('toFloor', stair.toFloor);
-      zone.setData('exitX', stair.exitX);
-      zone.setData('exitY', stair.exitY);
       this.stairZones.push(zone);
     }
   }
@@ -725,8 +723,8 @@ export default class RandomManorScene extends Phaser.Scene {
     const cam = this.cameras.main;
 
     const fadeRect = this.add.rectangle(
-      cam.scrollX + cam.width / 2,
-      cam.scrollY + cam.height / 2,
+      cam.width / 2,
+      cam.height / 2,
       cam.width * 2,
       cam.height * 2,
       0x000000, 0
