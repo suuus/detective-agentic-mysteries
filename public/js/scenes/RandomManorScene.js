@@ -823,22 +823,28 @@ export default class RandomManorScene extends Phaser.Scene {
     const cx = (room.x + Math.floor(room.w / 2)) * T + T / 2;
     const cy = (room.y + Math.floor(room.h / 2)) * T + T / 2;
     this._crimeSceneRoom = room.name;
+    const crimeFloor = this.multiFloor ? (room.floorNum ?? 0) : 0;
 
     const victimName = victim?.name || 'The victim';
 
     // Body outline in center of room
-    this.add.image(cx, cy, 'crime_body_outline').setDepth(2).setAlpha(0.85);
+    const bodyImg = this.add.image(cx, cy, 'crime_body_outline').setDepth(2).setAlpha(0.85);
 
     // Blood splatters near the body
-    this.add.image(cx + T, cy - T * 0.5, 'crime_blood_1').setDepth(2).setAlpha(0.7);
-    this.add.image(cx - T * 0.8, cy + T * 0.6, 'crime_blood_2').setDepth(2).setAlpha(0.6);
-    this.add.image(cx + T * 1.5, cy + T, 'crime_blood_1').setDepth(2).setAlpha(0.5);
+    const blood1 = this.add.image(cx + T, cy - T * 0.5, 'crime_blood_1').setDepth(2).setAlpha(0.7);
+    const blood2 = this.add.image(cx - T * 0.8, cy + T * 0.6, 'crime_blood_2').setDepth(2).setAlpha(0.6);
+    const blood3 = this.add.image(cx + T * 1.5, cy + T, 'crime_blood_1').setDepth(2).setAlpha(0.5);
 
     // Crime tape near the top edge of the room
     const tapeX = (room.x + Math.floor(room.w / 2)) * T;
     const tapeY = room.y * T + T + 4;
-    this.add.image(tapeX, tapeY, 'crime_tape').setDepth(2).setAlpha(0.8);
-    this.add.image(tapeX, tapeY + 8, 'crime_tape').setDepth(2).setAlpha(0.8);
+    const tape1 = this.add.image(tapeX, tapeY, 'crime_tape').setDepth(2).setAlpha(0.8);
+    const tape2 = this.add.image(tapeX, tapeY + 8, 'crime_tape').setDepth(2).setAlpha(0.8);
+
+    // Register crime scene visuals per-floor so they hide correctly on floor switch
+    if (this.multiFloor) {
+      this._floorObjects[crimeFloor].push(bodyImg, blood1, blood2, blood3, tape1, tape2);
+    }
 
     this._crimeDescription = `The crime scene. ${victimName} was found dead here in the ${room.name}. The chalk outline and dark stains mark where the body fell.`;
   }
