@@ -756,6 +756,9 @@ export default class ManorScene extends Phaser.Scene {
         });
         if (res.evidence) this._showPopup(res.evidence);
         window.inventoryManager?.refresh();
+        if (res.collected) {
+          window.playSting?.('evidence');
+        }
         // Narrate evidence discovery
         if (res.evidence) {
           window.gameAPI?.narrate('evidence_found', `Found: ${res.evidence.name} — ${res.evidence.detail}`).then(r => {
