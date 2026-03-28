@@ -1268,11 +1268,9 @@ app.post("/api/mystery/generate", async (_req, res) => {
       if (Array.isArray(creativeAssets.decorations)) {
         // Drop decorations for rooms that don't exist (AI hallucinated IDs)
         creativeAssets.decorations = creativeAssets.decorations.filter((d: any) => {
-          if (!validRoomIds.has(d.roomId)) {
-            console.warn(`  Creative: dropping decorations for unknown room "${d.roomId}"`);
-            return false;
-          }
-          return true;
+          const valid = validRoomIds.has(d.roomId);
+          if (!valid) console.warn(`  Creative: dropping decorations for unknown room "${d.roomId}"`);
+          return valid;
         });
         // If AI produced no valid decorations at all, spread them across real rooms
         if (creativeAssets.decorations.length === 0) {

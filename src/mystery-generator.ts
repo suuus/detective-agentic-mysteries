@@ -111,7 +111,7 @@ export function buildSkeletonPrompt(previousSettings: string[]): string {
 
   // Build the categories list dynamically from SETTING_CATEGORIES (single source of truth)
   const categoriesList = Object.entries(SETTING_CATEGORIES)
-    .map(([cat, venues]) => `- **${cat}**: ${venues.join(', ')}`)
+    .map(([category, venueList]) => `- **${category}**: ${venueList.join(', ')}`)
     .join('\n');
 
   let prompt = SKELETON_PROMPT_BASE.replace('{{SETTING_CATEGORIES_LIST}}', categoriesList);
