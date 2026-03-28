@@ -67,6 +67,9 @@ Output a JSON object with this EXACT structure (no other text):
   "rooms": [
     { "id": "snake_case", "name": "Display Name", "floor": "tile_floor|tile_carpet|tile_metal|tile_wood_deck|tile_carpet_blue|tile_carpet_red|tile_tile_white|tile_sand|tile_ice|tile_grass|tile_stone", "size": "small|medium|large" }
   ],
+  "upperRooms": [
+    { "name": "Display Name for Upper Floor version of each room", "floor": "tile_floor|tile_carpet|tile_metal|tile_wood_deck|tile_carpet_blue|tile_carpet_red|tile_tile_white|tile_sand|tile_ice|tile_grass|tile_stone" }
+  ],
   "characters": [
     {
       "id": "snake_case",
@@ -100,7 +103,8 @@ RULES:
 - Make the setting VIVID and unusual
 - Choose spriteColors for each character that match their role/personality (e.g. chef = white, military = olive, wealthy = deep red)
 - The visual palette should strongly reflect the setting (cold blues for ice station, warm golds for desert, sterile whites for lab, etc.)
-- roomLayout should match the setting (corridor for submarine/train, hub_spoke for space station, irregular for cave/ruins)`;
+- roomLayout should match the setting (corridor for submarine/train, hub_spoke for space station, irregular for cave/ruins)
+- upperRooms must have EXACTLY the same number of entries as rooms. Each entry is the upper-floor version of the corresponding ground-floor room — give it a thematic name fitting the setting (e.g. a winery's "Tasting Room" might become "Private Cellar", a lab's "Reception" might become "Data Vault"). Choose a floor texture that matches (warmer carpets upstairs, same stone if underground, etc.)`;
 
 /** Build the skeleton prompt with a forced random setting category and used-settings exclusion list. */
 export function buildSkeletonPrompt(previousSettings: string[]): string {

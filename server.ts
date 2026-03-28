@@ -1383,20 +1383,24 @@ app.post("/api/mystery/generate", async (_req, res) => {
       // All original rooms become floor 0
       rooms = rooms.map((r: any) => ({ ...r, floorNum: 0 }));
 
-      // Create upper floor rooms mirroring ground floor positions
-      const upperNames = [
+      // Create upper floor rooms mirroring ground floor positions.
+      // Use AI-generated upper room names/textures if provided, else fall back to generic defaults.
+      const upperRoomDefs: { name: string; floor: string }[] = Array.isArray(skeleton.upperRooms)
+        ? skeleton.upperRooms
+        : [];
+      const fallbackNames = [
         'Upper Gallery', 'Master Suite', 'Guest Chamber', 'Study Loft',
         'Sitting Room', 'Balcony', 'Dressing Room', 'Upper Hall',
       ];
-      const upperTextures = [
+      const fallbackTextures = [
         'tile_carpet', 'tile_carpet_blue', 'tile_carpet_red', 'tile_floor',
         'tile_carpet', 'tile_floor', 'tile_carpet', 'tile_carpet',
       ];
       const upperRooms = rooms.map((r: any, i: number) => ({
         ...r,
         id: 'upper_' + r.id,
-        name: upperNames[i % upperNames.length],
-        floor: upperTextures[i % upperTextures.length],
+        name: upperRoomDefs[i]?.name || fallbackNames[i % fallbackNames.length],
+        floor: upperRoomDefs[i]?.floor || fallbackTextures[i % fallbackTextures.length],
         floorNum: 1,
       }));
 
