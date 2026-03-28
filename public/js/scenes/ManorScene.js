@@ -222,8 +222,18 @@ export default class ManorScene extends Phaser.Scene {
           this._npcFloors[id] = floor;
           if (this.npcs[id]) this.npcs[id].setData('floor', floor);
         }
-        this._showFloor(this.currentFloor);
       }
+
+      // Sync player floor position from server state, if provided
+      if (typeof data.playerFloor === 'number') {
+        this.currentFloor = data.playerFloor;
+        if (this.player) {
+          this.player.setData('floor', this.currentFloor);
+        }
+      }
+
+      // Ensure the correct floor is shown based on currentFloor
+      this._showFloor(this.currentFloor);
       // Check for mid-game reveals
       this._checkHiddenRoom();
       this._checkRedHerring();
