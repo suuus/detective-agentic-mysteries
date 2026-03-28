@@ -109,16 +109,112 @@ document.querySelectorAll('.level-btn').forEach(btn => {
     currentLevel = levelId;
 
     if (levelId === 'random') {
-      // Show generation progress
-      const btnText = btn.innerHTML;
-      btn.disabled = true;
-      btn.innerHTML = '<strong>🎲 Generating mystery...</strong><br><span id="gen-status" style="font-size:0.85rem;opacity:0.7">Designing the crime scene...</span>';
+      // Show the full-screen generation overlay
+      const overlay = document.getElementById('generation-overlay');
+      const genLog = document.getElementById('gen-log');
+      const genSubtitle = document.getElementById('gen-panel-subtitle');
+
+      // Reset all pipeline steps
+      ['architect','characters','director','creative','world'].forEach(id => {
+        const el = document.getElementById('gen-step-' + id);
+        if (el) {
+          el.classList.remove('active','done');
+          el.querySelector('.gen-step-state').textContent = 'waiting';
+        }
+      });
+      if (genLog) genLog.innerHTML = '';
+      if (genSubtitle) genSubtitle.textContent = 'Your AI agents are designing a unique mystery…';
+
+      overlay.classList.remove('hidden');
+      levelSelect.classList.add('hidden');
+
+      /** Append a styled entry to the reasoning log */
+      function logEntry(text, cls = '') {
+        const div = document.createElement('div');
+        div.className = 'gen-log-entry' + (cls ? ' ' + cls : '');
+        div.textContent = text;
+        genLog.appendChild(div);
+        genLog.scrollTop = genLog.scrollHeight;
+      }
+
+      /** Mark a pipeline step active/done */
+      function setStepState(stepId, state) {
+        const el = document.getElementById('gen-step-' + stepId);
+        if (!el) return;
+        el.classList.remove('active','done');
+        if (state === 'active') {
+          el.classList.add('active');
+          el.querySelector('.gen-step-state').textContent = 'working…';
+        } else if (state === 'done') {
+          el.classList.add('done');
+          el.querySelector('.gen-step-state').textContent = '✓ done';
+        }
+      }
+
+      // Map agent names → pipeline step IDs
+      const agentToStep = {
+        architect: 'architect',
+        character_writer: 'characters',
+        director: 'director',
+        creative: 'creative',
+        world_builder: 'world',
+      };
 
       try {
         for await (const update of api.generateMystery()) {
-          const statusEl = document.getElementById('gen-status');
-          if (statusEl) statusEl.textContent = update.status || 'Working...';
-          if (update.error) throw new Error(update.status);
+          const phase = update.phase;
+
+          if (phase === 'thinking') {
+            // Mark the active step; also auto-complete the previous step
+            const stepId = agentToStep[update.agent];
+            if (stepId) {
+              // Complete any previously active step
+              ['architect','characters','director','creative','world'].forEach(id => {
+                const el = document.getElementById('gen-step-' + id);
+                if (el && el.classList.contains('active') && id !== stepId) {
+                  el.classList.remove('active');
+                  el.classList.add('done');
+                  el.querySelector('.gen-step-state').textContent = '✓ done';
+                }
+              });
+              setStepState(stepId, 'active');
+            }
+            logEntry(update.status, 'entry-status');
+
+          } else if (phase === 'skeleton_done') {
+            setStepState('architect', 'done');
+            logEntry(`📖 Title: "${update.title}"`, 'entry-data');
+            logEntry(`📍 Setting: ${update.setting}`, 'entry-data');
+            if (update.crime) logEntry(`🔪 Crime: ${update.crime}`, 'entry-data');
+            if (Array.isArray(update.characters)) {
+              logEntry(`👥 Suspects: ${update.characters.map(c => `${c.name} (${c.role})`).join(', ')}`, 'entry-data');
+            }
+            if (Array.isArray(update.rooms)) {
+              logEntry(`🏠 Rooms: ${update.rooms.join(', ')}`, 'entry-data');
+            }
+
+          } else if (phase === 'character_done') {
+            logEntry(`✅ ${update.characterName} — ${update.characterRole}`, 'entry-data');
+
+          } else if (phase === 'director_done') {
+            setStepState('director', 'done');
+
+          } else if (phase === 'creative_done') {
+            setStepState('creative', 'done');
+            if (update.palette) {
+              const p = update.palette;
+              logEntry(`🎨 Style: ${p.furnitureStyle || '—'} | Weather: ${p.weather || '—'} | Layout: ${p.roomLayout || '—'}`, 'entry-data');
+            }
+
+          } else if (phase === 'complete') {
+            setStepState('world', 'done');
+            logEntry(`\n🎉 "${update.title}" is ready — ${update.suspects} suspects, ${update.evidenceCount} clues`, 'entry-complete');
+            if (genSubtitle) genSubtitle.textContent = `"${update.title}" — entering the scene…`;
+
+          } else if (phase === 'error' || update.error) {
+            logEntry(update.status || 'Generation failed', 'entry-error');
+            throw new Error(update.status);
+          }
         }
 
         await api.selectLevel('random');
@@ -128,14 +224,12 @@ document.querySelectorAll('.level-btn').forEach(btn => {
         LEVEL_SUSPECTS.random = chars.map(c => ({ id: c.id, name: c.name }));
       } catch(err) {
         console.error('Mystery generation failed:', err);
-        btn.innerHTML = btnText;
-        btn.disabled = false;
+        overlay.classList.add('hidden');
+        levelSelect.classList.remove('hidden');
         return;
       }
 
-      btn.innerHTML = btnText;
-      btn.disabled = false;
-      levelSelect.classList.add('hidden');
+      overlay.classList.add('hidden');
 
       // Use dedicated RandomBootScene for generated mysteries
       game.scene.start('RandomBootScene');

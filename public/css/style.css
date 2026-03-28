@@ -811,3 +811,199 @@ body {
   border-radius: 4px; padding: 4px 8px; font-size: 12px;
 }
 .settings-actions { margin-top: 16px; text-align: right; }
+
+/* ══════════════════════════════════════════
+   GENERATION OVERLAY — Agents at Work
+   ══════════════════════════════════════════ */
+#generation-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(5, 3, 8, 0.97);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-body);
+  backdrop-filter: blur(4px);
+}
+
+#generation-panel {
+  width: min(680px, 92vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--panel-bg);
+  border: 1px solid rgba(201, 168, 76, 0.3);
+  border-radius: 8px;
+  padding: 28px 32px;
+  box-shadow: 0 0 60px rgba(0,0,0,0.8), 0 0 20px rgba(201,168,76,0.05);
+}
+
+#generation-panel h2 {
+  font-family: var(--font-heading);
+  color: var(--gold);
+  font-size: 1.4rem;
+  margin-bottom: 4px;
+  letter-spacing: 0.5px;
+}
+
+/* ── Pipeline steps ── */
+#gen-pipeline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.gen-step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.06);
+  background: rgba(255,255,255,0.02);
+  transition: all 0.3s ease;
+}
+
+.gen-step.active {
+  border-color: rgba(201, 168, 76, 0.5);
+  background: rgba(201, 168, 76, 0.07);
+  box-shadow: 0 0 12px rgba(201,168,76,0.1);
+}
+
+.gen-step.done {
+  border-color: rgba(80, 200, 120, 0.3);
+  background: rgba(80, 200, 120, 0.05);
+}
+
+.gen-step-icon {
+  font-size: 1.4rem;
+  width: 36px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.gen-step-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.gen-step-label {
+  font-family: var(--font-heading);
+  font-size: 0.9rem;
+  color: var(--cream);
+  letter-spacing: 0.3px;
+}
+
+.gen-step-desc {
+  font-size: 0.75rem;
+  opacity: 0.45;
+  margin-top: 1px;
+}
+
+.gen-step-state {
+  font-size: 0.75rem;
+  opacity: 0.4;
+  font-style: italic;
+  flex-shrink: 0;
+}
+
+.gen-step.active .gen-step-state {
+  opacity: 1;
+  color: var(--gold);
+  font-style: normal;
+  font-weight: bold;
+}
+
+.gen-step.active .gen-step-state::after {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  background: var(--gold);
+  border-radius: 50%;
+  animation: gen-pulse 1s ease-in-out infinite;
+  vertical-align: middle;
+}
+
+.gen-step.done .gen-step-state {
+  opacity: 0.8;
+  color: #6dcf93;
+  font-style: normal;
+}
+
+@keyframes gen-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.3; transform: scale(0.7); }
+}
+
+/* ── Live reasoning log ── */
+#gen-log-container {
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 6px;
+  background: rgba(0,0,0,0.35);
+  overflow: hidden;
+}
+
+#gen-log-header {
+  font-family: var(--font-heading);
+  font-size: 0.8rem;
+  color: var(--gold);
+  opacity: 0.8;
+  padding: 8px 14px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+#gen-log {
+  padding: 12px 14px;
+  max-height: 280px;
+  overflow-y: auto;
+  font-size: 0.82rem;
+  line-height: 1.65;
+  font-family: 'Courier New', monospace;
+  scroll-behavior: smooth;
+}
+
+.gen-log-entry {
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  animation: gen-entry-in 0.25s ease;
+  color: var(--cream);
+  opacity: 0.8;
+}
+
+.gen-log-entry:last-child { border-bottom: none; }
+
+.gen-log-entry.entry-status {
+  color: var(--gold);
+  opacity: 0.9;
+}
+
+.gen-log-entry.entry-data {
+  color: rgba(232, 220, 200, 0.65);
+  padding-left: 12px;
+}
+
+.gen-log-entry.entry-data::before {
+  content: '› ';
+  opacity: 0.4;
+}
+
+.gen-log-entry.entry-complete {
+  color: #6dcf93;
+  opacity: 1;
+  font-weight: bold;
+}
+
+.gen-log-entry.entry-error {
+  color: #e06c75;
+  opacity: 1;
+}
+
+@keyframes gen-entry-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

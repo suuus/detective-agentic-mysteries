@@ -44,7 +44,65 @@
     </div>
   </div>
 
-  <!-- ══════════════ DIALOG OVERLAY ══════════════ -->
+  <!-- ══════════════ GENERATION OVERLAY ══════════════ -->
+  <div id="generation-overlay" class="hidden">
+    <div id="generation-panel">
+      <h2 id="gen-panel-title">🕵️ Agents at Work</h2>
+      <p id="gen-panel-subtitle" style="opacity:0.55;font-size:0.85rem;margin-bottom:20px">Your AI agents are designing a unique mystery…</p>
+
+      <!-- Pipeline steps -->
+      <div id="gen-pipeline">
+        <div class="gen-step" id="gen-step-architect">
+          <div class="gen-step-icon">🏛️</div>
+          <div class="gen-step-body">
+            <div class="gen-step-label">Mystery Architect</div>
+            <div class="gen-step-desc">Inventing the crime, setting &amp; suspects</div>
+          </div>
+          <div class="gen-step-state">waiting</div>
+        </div>
+        <div class="gen-step" id="gen-step-characters">
+          <div class="gen-step-icon">📝</div>
+          <div class="gen-step-body">
+            <div class="gen-step-label">Character Writer</div>
+            <div class="gen-step-desc">Writing each suspect's psychology &amp; secrets</div>
+          </div>
+          <div class="gen-step-state">waiting</div>
+        </div>
+        <div class="gen-step" id="gen-step-director">
+          <div class="gen-step-icon">🎬</div>
+          <div class="gen-step-body">
+            <div class="gen-step-label">Director AI</div>
+            <div class="gen-step-desc">Scripting night events &amp; NPC interactions</div>
+          </div>
+          <div class="gen-step-state">waiting</div>
+        </div>
+        <div class="gen-step" id="gen-step-creative">
+          <div class="gen-step-icon">🎨</div>
+          <div class="gen-step-body">
+            <div class="gen-step-label">Creative Agency</div>
+            <div class="gen-step-desc">Designing visual atmosphere &amp; props</div>
+          </div>
+          <div class="gen-step-state">waiting</div>
+        </div>
+        <div class="gen-step" id="gen-step-world">
+          <div class="gen-step-icon">🗺️</div>
+          <div class="gen-step-body">
+            <div class="gen-step-label">World Builder</div>
+            <div class="gen-step-desc">Assembling rooms, evidence &amp; positions</div>
+          </div>
+          <div class="gen-step-state">waiting</div>
+        </div>
+      </div>
+
+      <!-- Live reasoning log -->
+      <div id="gen-log-container">
+        <div id="gen-log-header">💭 Agent Reasoning</div>
+        <div id="gen-log"></div>
+      </div>
+    </div>
+  </div>
+
+
   <div id="dialog-overlay" class="panel hidden">
     <div class="dialog-inner">
       <div class="dialog-header">

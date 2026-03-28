@@ -1183,8 +1183,8 @@ app.post("/api/mystery/generate", async (_req, res) => {
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
 
-  const sendStatus = (msg: string) => {
-    res.write(`data: ${JSON.stringify({ status: msg })}\n\n`);
+  const sendEvent = (event: Record<string, any>) => {
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
   };
 
   try {
@@ -1202,18 +1202,31 @@ app.post("/api/mystery/generate", async (_req, res) => {
     });
 
     // ── Step 1: Generate skeleton ──
-    sendStatus("🎭 Designing the crime scene and suspects...");
+    sendEvent({ phase: 'thinking', agent: 'architect', status: "🏛️ Mystery Architect is designing the world from scratch..." });
     const skeletonPrompt = buildSkeletonPrompt(previousSettings);
     const skeletonResult = await architect.sendAndWait({ prompt: skeletonPrompt }, 90_000);
     const skeletonJson = extractJSON(skeletonResult?.data?.content ?? "");
     const skeleton = JSON.parse(skeletonJson);
     console.log(`  Skeleton: "${skeleton.title}" — ${skeleton.characters.length} suspects, ${skeleton.evidence.length} evidence`);
 
+    sendEvent({
+      phase: 'skeleton_done',
+      agent: 'architect',
+      status: `✅ Mystery designed: "${skeleton.title}"`,
+      title: skeleton.title,
+      setting: skeleton.setting,
+      crime: skeleton.crime,
+      characters: skeleton.characters.map((c: any) => ({ name: c.name, role: c.role })),
+      evidenceCount: skeleton.evidence.length,
+      rooms: skeleton.rooms.map((r: any) => r.name || r.id),
+      visual: skeleton.visual,
+    });
+
     // ── Step 2: Generate each character's system prompt ──
     const fullCharacters = [];
     for (let i = 0; i < skeleton.characters.length; i++) {
       const char = skeleton.characters[i];
-      sendStatus(`📝 Writing ${char.name}'s backstory (${i+1}/${skeleton.characters.length})...`);
+      sendEvent({ phase: 'thinking', agent: 'character_writer', status: `📝 Writing ${char.name}'s full backstory, secrets, and psychology (${i+1}/${skeleton.characters.length})...`, characterName: char.name, characterRole: char.role });
 
       const charResult = await architect.sendAndWait({
         prompt: buildCharacterPrompt(skeleton, char, skeleton.characters, skeleton.evidence)
@@ -1225,17 +1238,19 @@ app.post("/api/mystery/generate", async (_req, res) => {
         systemPrompt: prompt,
       });
       console.log(`  Character ${i+1}: ${char.name} (${prompt.length} chars)`);
+      sendEvent({ phase: 'character_done', agent: 'character_writer', status: `✅ ${char.name} fully written`, characterName: char.name, characterRole: char.role, promptLength: prompt.length });
     }
 
     // ── Step 3: Generate Director prompt ──
-    sendStatus("🎬 Creating the Director's playbook...");
+    sendEvent({ phase: 'thinking', agent: 'director', status: "🎬 Director AI is writing the night orchestration playbook..." });
     const dirResult = await architect.sendAndWait({
       prompt: buildDirectorPromptRequest(skeleton)
     }, 60_000);
     const directorPrompt = dirResult?.data?.content ?? "";
+    sendEvent({ phase: 'director_done', agent: 'director', status: "✅ Director playbook ready" });
 
     // ── Step 4: Creative Agency — fresh session to avoid context pollution ──
-    sendStatus("🎨 Designing visual atmosphere and decorations...");
+    sendEvent({ phase: 'thinking', agent: 'creative', status: "🎨 Creative Agency is designing the visual atmosphere and props..." });
     let creativeAssets: CreativeAssets;
     let creativeSession;
     try {
@@ -1278,11 +1293,13 @@ app.post("/api/mystery/generate", async (_req, res) => {
         }
       }
       console.log(`  Creative agent: ${creativeAssets.decorations?.length ?? 0} room decoration groups, ${creativeAssets.ambientProps?.length ?? 0} ambient props`);
+      sendEvent({ phase: 'creative_done', agent: 'creative', status: "✅ Visual atmosphere designed", palette: skeleton.visual, decorationCount: creativeAssets.decorations?.length ?? 0 });
     } catch (err: any) {
       console.warn("  Creative agent failed, using defaults:", err.message);
       creativeAssets = getDefaultCreativeAssets(
         skeleton.rooms.map((r: any) => ({ id: r.id, name: r.name || r.id }))
       );
+      sendEvent({ phase: 'creative_done', agent: 'creative', status: "🎨 Visual atmosphere using defaults" });
     } finally {
       if (creativeSession) {
         try { await creativeSession.disconnect(); } catch {}
@@ -1291,7 +1308,7 @@ app.post("/api/mystery/generate", async (_req, res) => {
     }
 
     // ── Step 5: Compute room layout, positions, sentiments ──
-    sendStatus("🗺️ Building the world...");
+    sendEvent({ phase: 'thinking', agent: 'world_builder', status: "🗺️ Assembling the world map and placing all elements..." });
 
     const layoutType = skeleton.visual?.roomLayout || 'grid';
     const roomCount = skeleton.rooms.length;
@@ -1505,21 +1522,14 @@ app.post("/api/mystery/generate", async (_req, res) => {
     await architect.disconnect();
     try { await client.deleteSession("blackwood-architect"); } catch {}
 
-    sendStatus(`✅ "${skeleton.title}" is ready! ${fullCharacters.length} suspects, ${skeleton.evidence.length} evidence items.`);
-    res.write(`data: ${JSON.stringify({
-      status: "complete",
-      title: skeleton.title,
-      setting: skeleton.setting,
-      suspects: fullCharacters.length,
-      theme: skeleton.settingTheme,
-    })}\n\n`);
+    sendEvent({ phase: 'complete', status: `✅ "${skeleton.title}" is ready!`, title: skeleton.title, setting: skeleton.setting, suspects: fullCharacters.length, evidenceCount: skeleton.evidence.length, theme: skeleton.settingTheme });
     res.write("data: [DONE]\n\n");
     res.end();
 
     console.log(`✅ Generated: "${skeleton.title}" with ${fullCharacters.length} suspects`);
   } catch (err: any) {
     console.error("Mystery generation failed:", err.message);
-    sendStatus(`❌ Generation failed: ${err.message}`);
+    sendEvent({ phase: 'error', status: `❌ Generation failed: ${err.message}`, error: true });
     res.write("data: [DONE]\n\n");
     res.end();
   }
