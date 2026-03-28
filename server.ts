@@ -1278,22 +1278,40 @@ app.post("/api/mystery/generate", async (_req, res) => {
       const creativeJson = extractJSON(rawContent);
       creativeAssets = JSON.parse(creativeJson) as CreativeAssets;
 
-      // Validate and normalize roomIds to match actual skeleton room IDs
-      const validRoomIds = new Set(skeleton.rooms.map((r: any) => r.id));
+      // Validate and normalize roomIds to match actual skeleton room IDs.
+      // The AI often uses room names or display names instead of snake_case IDs — remap
+      // rather than drop so no creative work is silently lost.
+      const roomIdList: string[] = skeleton.rooms.map((r: any) => r.id);
+      const validRoomIdSet = new Set<string>(roomIdList);
       if (Array.isArray(creativeAssets.decorations)) {
-        // Drop decorations for rooms that don't exist (AI hallucinated IDs)
-        creativeAssets.decorations = creativeAssets.decorations.filter((d: any) => {
-          const valid = validRoomIds.has(d.roomId);
-          if (!valid) console.warn(`  Creative: dropping decorations for unknown room "${d.roomId}"`);
-          return valid;
-        });
-        // If AI produced no valid decorations at all, spread them across real rooms
-        if (creativeAssets.decorations.length === 0) {
-          console.warn("  Creative: no valid room decorations after ID normalization");
-        }
+        creativeAssets.decorations = creativeAssets.decorations.map((d: any, idx: number) => {
+          if (validRoomIdSet.has(d.roomId)) return d;
+          // Try case-insensitive name / id matching before falling back positionally
+          const nameMatch = skeleton.rooms.find((r: any) =>
+            r.name?.toLowerCase() === d.roomId?.toLowerCase() ||
+            r.id?.toLowerCase() === d.roomId?.toLowerCase() ||
+            r.name?.toLowerCase().replace(/\s+/g, '_') === d.roomId?.toLowerCase() ||
+            d.roomId?.toLowerCase().replace(/[\s_-]+/g, '') === r.name?.toLowerCase().replace(/[\s_-]+/g, '')
+          );
+          const fallbackId = nameMatch?.id || roomIdList[idx % roomIdList.length];
+          console.warn(`  Creative: remapping decoration roomId "${d.roomId}" → "${fallbackId}"`);
+          return { ...d, roomId: fallbackId };
+        }).filter(Boolean);
       }
+      const designedItems = (creativeAssets.decorations ?? []).flatMap((d: any) =>
+        (d.items ?? []).map((item: any) => item.name).filter(Boolean)
+      );
+      const ambientPropNames = (creativeAssets.ambientProps ?? []).map((p: any) => p.name).filter(Boolean);
       console.log(`  Creative agent: ${creativeAssets.decorations?.length ?? 0} room decoration groups, ${creativeAssets.ambientProps?.length ?? 0} ambient props`);
-      sendEvent({ phase: 'creative_done', agent: 'creative', status: "✅ Visual atmosphere designed", palette: skeleton.visual, decorationCount: creativeAssets.decorations?.length ?? 0 });
+      sendEvent({
+        phase: 'creative_done', agent: 'creative',
+        status: "✅ Visual atmosphere designed",
+        palette: skeleton.visual,
+        decorationCount: creativeAssets.decorations?.length ?? 0,
+        designedItems: designedItems.slice(0, 12),
+        ambientPropNames,
+        hasCustomWallTile: !!(creativeAssets.wallTile?.draw?.length),
+      });
     } catch (err: any) {
       console.warn("  Creative agent failed, using defaults:", err.message);
       creativeAssets = getDefaultCreativeAssets(
