@@ -23,28 +23,10 @@ export interface GeneratedMystery {
   initialSentiments: Record<string, NPCSentiment>;
 }
 
-// All setting categories with their example venues.
-// Used both in the prompt and to force random selection server-side.
-export const SETTING_CATEGORIES: Record<string, string[]> = {
-  "Performance":      ["opera house", "jazz club", "comedy show", "puppet theater", "ballet academy", "film set", "concert tour bus", "drag cabaret", "escape room theater"],
-  "Science":          ["research station (Arctic/Antarctic)", "observatory", "particle accelerator lab", "botanical garden greenhouse", "marine biology lab", "volcano monitoring station", "genetics laboratory", "cryonics facility"],
-  "Transport":        ["orient express train", "zeppelin airship", "cargo freighter", "space shuttle", "canal barge", "hot air balloon festival", "airport control tower", "cable car station"],
-  "Food/Drink":       ["vineyard/winery", "Michelin restaurant kitchen", "chocolate factory", "whiskey distillery", "food truck festival", "tea plantation", "brewing cooperative", "spice market warehouse"],
-  "History":          ["medieval castle restoration", "Egyptian tomb excavation", "Roman bathhouse museum", "WWII bunker", "Viking longship replica", "Mayan temple", "Victorian asylum", "old printing press museum"],
-  "Sport/Competition":["chess tournament", "fencing academy", "horse racing stable", "yacht regatta", "poker tournament", "ice skating championship", "underground boxing gym", "competitive taxidermy contest"],
-  "Nature":           ["national park ranger station", "deep cave system", "lighthouse island", "tree canopy research platform", "coral reef diving base", "safari lodge", "bee farm", "mushroom cultivation facility"],
-  "Art/Culture":      ["sculpture gallery", "fashion show backstage", "antique auction house", "tattoo convention", "photography darkroom studio", "rare book library", "graffiti artist collective", "film restoration archive"],
-  "Industry":         ["abandoned factory", "mining operation", "power plant", "newspaper printing press", "clock tower", "radio station", "glassblowing studio", "watchmaker's atelier"],
-  "Unusual":          ["escape room business", "haunted house attraction", "wax museum", "planetarium", "aquarium after-hours", "botanical maze", "snow globe factory", "perfume laboratory", "competitive pigeon racing club", "taxidermy school"],
-};
-
 // Step 1: Generate the mystery skeleton
 export const SKELETON_PROMPT_BASE = `You are a MYSTERY ARCHITECT designing a murder mystery game.
 
-Create an ORIGINAL mystery with the EXACT setting specified in the FORCED SETTING instruction below. You must use that setting — not a different one.
-
-SETTING CATEGORIES for reference:
-{{SETTING_CATEGORIES_LIST}}
+Invent a COMPLETELY ORIGINAL setting of your own choosing. You have full creative freedom — pick any real-world location, profession, subculture, historical era, industry, or niche hobby that would make a compelling and unusual backdrop for a murder. Think specifically and vividly: not just "a restaurant" but "a Michelin-starred kitchen mid-service"; not just "a lab" but "a cryonics revival facility at 3am"; not just "a ship" but "a solo-circumnavigation yacht run aground".
 
 DO NOT pick: mansion, manor, hotel, cruise ship, archaeological dig, circus, submarine, underwater base, desert camp. These are BANNED.
 
@@ -100,32 +82,19 @@ RULES:
 - Room sizes should VARY: mix small (storage, closet), medium (office), and large (hall, arena)
 - Include red herrings pointing to innocent suspects
 - Every suspect needs a believable motive, secret, and alibi
-- Make the setting VIVID and unusual
+- Make the setting VIVID and unusual — the more specific and unexpected the better
 - Choose spriteColors for each character that match their role/personality (e.g. chef = white, military = olive, wealthy = deep red)
 - The visual palette should strongly reflect the setting (cold blues for ice station, warm golds for desert, sterile whites for lab, etc.)
 - roomLayout should match the setting (corridor for submarine/train, hub_spoke for space station, irregular for cave/ruins)
 - upperRooms must have EXACTLY the same number of entries as rooms. Each entry is the upper-floor version of the corresponding ground-floor room — give it a thematic name fitting the setting (e.g. a winery's "Tasting Room" might become "Private Cellar", a lab's "Reception" might become "Data Vault"). Choose a floor texture that matches (warmer carpets upstairs, same stone if underground, etc.)`;
 
-/** Build the skeleton prompt with a forced random setting category and used-settings exclusion list. */
+/** Build the skeleton prompt, letting the AI freely invent its own setting/scenario. */
 export function buildSkeletonPrompt(previousSettings: string[]): string {
-  const categories = Object.keys(SETTING_CATEGORIES);
-  const randomCategory = categories[Math.floor(Math.random() * categories.length)];
-  const venues = SETTING_CATEGORIES[randomCategory];
-  const randomVenue = venues[Math.floor(Math.random() * venues.length)];
+  let prompt = SKELETON_PROMPT_BASE;
 
-  // Build the categories list dynamically from SETTING_CATEGORIES (single source of truth)
-  const categoriesList = Object.entries(SETTING_CATEGORIES)
-    .map(([category, venueList]) => `- **${category}**: ${venueList.join(', ')}`)
-    .join('\n');
-
-  let prompt = SKELETON_PROMPT_BASE.replace('{{SETTING_CATEGORIES_LIST}}', categoriesList);
-
-  // Force the random category
-  prompt += `\n\nFORCED SETTING: You MUST create a mystery set in a **${randomCategory}** venue. Specifically, base it on or inspired by: "${randomVenue}". Make it your own — twist it, combine it with adjacent ideas, but stay within this category.`;
-
-  // Exclude previously used settings
+  // Exclude previously used settings so the AI doesn't repeat itself
   if (previousSettings.length > 0) {
-    prompt += `\n\nALREADY USED (do NOT repeat these titles or settings):\n- ${previousSettings.join('\n- ')}`;
+    prompt += `\n\nALREADY USED (do NOT repeat these titles or settings — invent something completely different):\n- ${previousSettings.join('\n- ')}`;
   }
 
   return prompt;
