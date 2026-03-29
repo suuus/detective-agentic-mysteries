@@ -36,6 +36,7 @@ The server runs on port 3000. It serves static files from `public/` and provides
 │   ├── director.ts              # AI Director agent (orchestrates nights)
 │   ├── narrator.ts              # Narrator agent (atmospheric prose + hints)
 │   ├── profiler.ts              # Profiler agent (detective behavior analysis)
+│   ├── psychologist.ts          # Psychologist agent (NPC emotional dynamics)
 │   ├── gameState.ts             # Game state, evidence, day/night, sentiments, accusation logic
 │   └── tools.ts                 # Copilot SDK tools available to NPC agents
 ├── public/
@@ -74,10 +75,10 @@ The server runs on port 3000. It serves static files from `public/` and provides
 
 ## Architecture Overview
 
-### 12+ AI Agents Running Simultaneously
+### 14+ AI Agents Running Simultaneously
 
 | Agent | Session ID | Role | Model |
-|-------|-----------|------|-------|
+|-------|-----------|------|---------|
 | Victoria | blackwood-victoria | NPC suspect | gpt-4.1 |
 | Hartwell | blackwood-hartwell | NPC suspect (killer) | gpt-4.1 |
 | Clara | blackwood-clara | NPC suspect | gpt-4.1 |
@@ -87,6 +88,7 @@ The server runs on port 3000. It serves static files from `public/` and provides
 | Forensics | blackwood-forensics | Evidence analysis (streaming) | gpt-4.1 |
 | Narrator | blackwood-narrator | Atmospheric prose generation | gpt-4.1 |
 | Profiler | blackwood-profiler | Detective behavior analysis | gpt-4.1 |
+| Psychologist | blackwood-psychologist | NPC emotional dynamics expert | gpt-4.1 |
 | Red Herring | blackwood-{dynamic} | Dynamically spawned misleading NPC | gpt-4.1 |
 | Skeleton Key | blackwood-architect | Procedural mystery generation | gpt-4.1 |
 | Creative Agency | blackwood-creative-{env,props,chars} | 3 parallel agents for visual asset generation | gpt-4.1 |
@@ -103,20 +105,23 @@ Agents communicate through **server-mediated patterns**, not direct connections:
 
 1. **Tool-mediated state** — NPCs call tools that modify shared game state; other agents read it through their own tools
 2. **Orchestrated conversations** — Server routes NPC A's response as context into NPC B's prompt (night phase, 4 exchanges per pair)
-3. **Fire-and-forget broadcasting** — After interrogation: gossip spreading, player profiling, contradiction detection run async
+3. **Fire-and-forget broadcasting** — After interrogation: gossip spreading, player profiling, psychologist analysis, contradiction detection run async
 4. **`onPostToolUse` hooks** — SDK lifecycle hooks fire after every NPC tool call, propagating side effects (emotional shifts, clue reveals, body language) to nearby NPCs automatically — during both interrogations and night conversations
+5. **Psychologist → Director briefing** — Before night planning, the Psychologist produces a psychological briefing that the Director uses to plan emotionally-informed night conversations
+6. **Detective profile injection** — Every interrogation and night conversation prompt includes the detective's profiled style, so NPCs adapt their behavior to the player's approach
 
 ### Key Flows
 
-**Player interrogates NPC:** `POST /api/talk/:characterId` → emotional context injected → SSE stream → dialog UI → server-side emotion nudge + gossip + profiling + contradiction detection (fire-and-forget)
+**Player interrogates NPC:** `POST /api/talk/:characterId` → emotional context + detective profile injected → SSE stream → dialog UI → psychologist analysis + gossip + profiling + contradiction detection (fire-and-forget)
 
 **Night falls (every 5 real minutes, or via End Day button):**
-1. Director analyzes game state via tools (with auto-retry on stale sessions)
-2. Director calls `submit_night_plan` (conversation pairs, NPC positions, evidence changes)
-3. If Director fails, fallback conversation pairs are generated from active characters
-4. NPC-to-NPC conversations execute (4 exchanges per pair)
-5. Player sees conversations displayed with click-to-advance
-6. Next morning: NPCs get conversation memories injected, positions/evidence updated
+1. Psychologist produces psychological briefing (who's volatile, strained relationships, predicted escalations)
+2. Director receives briefing + analyzes game state via tools (with auto-retry on stale sessions)
+3. Director calls `submit_night_plan` (conversation pairs, NPC positions, evidence changes)
+4. If Director fails, fallback conversation pairs are generated from active characters
+5. NPC-to-NPC conversations execute (4 exchanges per pair) — prompts include detective profile + reputation
+6. Player sees conversations displayed with click-to-advance
+7. Next morning: NPCs get conversation memories injected, positions/evidence updated
 
 **Player accuses:** `POST /api/accuse` → validates suspect + motive + evidence → on success: accusation modal transforms into crime replay with chapter-by-chapter "Next" navigation, including AI-generated detective performance assessment
 
@@ -152,8 +157,9 @@ Agents communicate through **server-mediated patterns**, not direct connections:
 - `public/js/scenes/ManorScene.js` — `DAY_DURATION`, `GAME_START_HOUR`, `GAME_END_HOUR`
 
 ### When changing the emotional system:
+- `src/psychologist.ts` — Psychologist agent (AI-powered emotion analysis)
 - `src/tools.ts` — `update_sentiment` and `get_my_sentiment` tools
-- `server.ts` — `nudgeEmotion()` (server-side auto-nudging), emotional context injection in `/api/talk`
+- `server.ts` — `analyzeEmotions()` (psychologist after interrogation), `analyzeEvidenceReaction()` (evidence shown), emotional + detective profile context injection in `/api/talk`, psychologist night briefing in `planNight()`
 - `public/js/npcEmotions.js` — Floating icons, tints, breathing speed
 - `public/js/dialog.js` — Mood indicator in dialog panel
 

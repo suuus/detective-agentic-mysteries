@@ -1140,11 +1140,12 @@ This replaces manual eavesdropping wiring and ensures side effects fire consiste
 | Creative Agency | creative-agent.ts | 3 parallel visual design agents | DrawOp DSL, Promise.allSettled |
 | Narrator | narrator.ts | Atmospheric prose agent | Noir narration + hint system |
 | Profiler | profiler.ts | Detective behavior analysis | Style/trait detection every 3rd question |
+| Psychologist | psychologist.ts | NPC emotional dynamics AI | Analyzes exchanges, briefs Director, evidence reactions |
 | Hidden Room | server.ts + ManorScene.js | Late-game map expansion | Dynamic room reveal, doorway clearing |
 | Red Herring NPC | server.ts + ManorScene.js | Misleading dynamic NPC | Random archetype pool, probabilistic spawn |
 | SDK Hooks | server.ts | Reactive cross-agent side effects | `onPostToolUse` for eavesdropping, emotional propagation |
 | Director Resilience | server.ts | Auto-retry + night fallback | `directorSendAndWait()`, fallback pairs |
-| Emotion Nudging | server.ts | Server-side sentiment shifts | `nudgeEmotion()` + evidence show emotions |
+| Detective Adaptation | server.ts | Profile injection + night briefing | Profile in every prompt, Psychologist→Director briefing |
 
 ---
 

@@ -56,8 +56,8 @@ See `docs/npc-design-guide.md` section 16 "How to Build a New Level" for the ful
 - Evidence IDs must match between `gameState.ts` (definitions), `BootScene.js` (sprites as `ev_{id}`), and `ManorScene.js` (placement)
 - Don't use `Promise.all` for parallel creative agents — use `Promise.allSettled` so one failure doesn't discard the rest
 - Director calls must use `directorSendAndWait()` — never call `getDirectorSession().sendAndWait()` directly
-- NPC interrogation messages get emotional context injected server-side — don't duplicate in frontend
-- Showing evidence via `/api/evidence/:id/show/:characterId` auto-nudges NPC emotions — no extra call needed
+- NPC interrogation messages get emotional context + detective profile injected server-side — don't duplicate in frontend
+- Showing evidence via `/api/evidence/:id/show/:characterId` triggers psychologist analysis — no manual emotion nudge needed
 
 ## Versioning & Changelog
 

@@ -683,9 +683,10 @@ These relationships are dynamic — as evidence emerges and emotions shift, Hart
 
 | Component | Role | Authority | Input | Output |
 |-----------|------|-----------|-------|--------|
-| **NPCs (5+)** | Interrogation targets | Within systemPrompt | Detective questions + emotional context | Responses, clues, emotional shifts |
-| **Director** | World orchestrator + crime replay | Full narrative control | Day's investigation progress | Night plans, evidence changes, NPC positions, detective assessment |
-| **Profiler** | Detective psychologist | Behavioral analysis | Every 3rd question + current profile | Style/trait/confidence updates |
+| **NPCs (5+)** | Interrogation targets | Within systemPrompt | Detective questions + emotional context + detective profile | Responses, clues, emotional shifts |
+| **Director** | World orchestrator + crime replay | Full narrative control | Day's investigation progress + psychologist briefing | Night plans, evidence changes, NPC positions, detective assessment |
+| **Profiler** | Detective analyst | Behavioral analysis | Every 3rd question + current profile | Style/trait/confidence updates |
+| **Psychologist** | NPC emotion expert | Emotional dynamics | Every interrogation + evidence shows + night briefing | Nuanced emotion updates, behavioral notes, Director briefing |
 | **Narrator** | Atmospheric prose | Omniscient observer | Game events | Noir narration + hints |
 | **Forensics** | Evidence analyst | Scientific examination | Evidence items | Detailed forensic analysis (streaming) |
 | **Red Herring** | Misleading NPC | Same as regular NPCs | Triggered mid-game | False theories, dramatic misdirection |
@@ -920,27 +921,29 @@ In `gameState.ts`, set:
 
 ## **19. DYNAMIC EMOTIONAL SYSTEM**
 
-### **Server-Side Emotion Nudging** (`server.ts` — `nudgeEmotion()`)
-After every interrogation, the server analyzes both the player's message and the NPC's response for emotional cues and applies small sentiment shifts automatically:
+### **Psychologist Agent** (`src/psychologist.ts`)
+A dedicated AI forensic psychologist that silently observes all interrogations and evidence presentations. It replaces regex-based emotion nudging with genuine psychological reasoning.
 
-- **Aggressive player tone** (liar, confess, guilty) → NPC trust drops, state shifts to defensive/scared/hostile
-- **Sympathetic player tone** (understand, sorry, trust me) → NPC trust rises, state de-escalates
-- **Evidence references** → calm NPCs become nervous
-- **NPC response cues** (trembling, how dare, I'll tell you) → state adjusts to match emotional language
+**After every interrogation** (`analyzeEmotions()`): The Psychologist receives the full exchange, the NPC's current emotional state, the detective's profiled style, and the question count. It calls `update_npc_emotion` with:
+- `emotional_state` — nuanced state assessment
+- `detective_trust_delta` — small trust shift (-2 to +2)
+- `reason` — observable behavioral note (e.g., "Hands trembling after being shown the letter")
+- `toward_other` — optional feelings about another NPC
 
-### **Emotional Context Injection**
+**After evidence is shown** (`analyzeEvidenceReaction()`): The Psychologist assesses the psychological impact of specific evidence on the NPC.
+
+**Before night planning**: The Psychologist produces a briefing for the Director identifying who's volatile, strained relationships, and predicted escalations.
+
+### **Detective Profile Injection**
 Every interrogation message is enriched server-side with:
 ```
 [EMOTIONAL CONTEXT — your current feelings: {sentiment description}]
-[This is question #{N} from the detective...]
+[DETECTIVE PROFILE — this detective is {style}. {analysis} Reputation: {reputation}. Gossip: {...}]
 ```
-This ensures NPCs always know their emotional state without needing to call `get_my_sentiment`.
+NPCs always know both their emotional state AND the detective's approach, so they adapt behavior in real-time.
 
-### **Evidence Presentation Emotions**
-Showing evidence via `POST /api/evidence/:id/show/:characterId` auto-nudges emotions:
-- Calm → nervous
-- Nervous/defensive → scared or more defensive
-- All: trust drops by 1
+### **Night Conversation Adaptation**
+Night conversation prompts include `YOUR IMPRESSION OF THE DETECTIVE` — NPCs discuss the detective's methods, whether to cooperate or stonewall, and share how they were treated.
 
 ### **Visual Feedback** (`public/js/npcEmotions.js`)
 Polls `/api/sentiments` every 8s and updates per-NPC:
