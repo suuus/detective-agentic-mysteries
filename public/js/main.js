@@ -134,6 +134,236 @@ document.querySelectorAll('.level-btn').forEach(btn => {
       if (genLog) genLog.innerHTML = '';
       if (genSubtitle) genSubtitle.textContent = 'Your AI agents are designing a unique mystery...';
 
+      // ── View toggle (list vs network vs architecture) ──
+      const pipelineEl = document.getElementById('gen-pipeline');
+      const networkEl = document.getElementById('gen-network');
+      const archEl = document.getElementById('gen-arch');
+      const listBtn = document.getElementById('gen-view-list-btn');
+      const graphBtn = document.getElementById('gen-view-graph-btn');
+      const archBtn = document.getElementById('gen-view-arch-btn');
+      const savedView = localStorage.getItem('gen-view') || 'list';
+
+      function setGenView(view) {
+        pipelineEl.style.display = 'none';
+        networkEl.classList.add('hidden');
+        archEl.classList.add('hidden');
+        listBtn.classList.remove('active');
+        graphBtn.classList.remove('active');
+        archBtn.classList.remove('active');
+        if (view === 'graph') {
+          networkEl.classList.remove('hidden');
+          graphBtn.classList.add('active');
+        } else if (view === 'arch') {
+          archEl.classList.remove('hidden');
+          archBtn.classList.add('active');
+        } else {
+          pipelineEl.style.display = '';
+          listBtn.classList.add('active');
+        }
+        localStorage.setItem('gen-view', view);
+      }
+      setGenView(savedView);
+      listBtn.addEventListener('click', () => setGenView('list'));
+      graphBtn.addEventListener('click', () => setGenView('graph'));
+      archBtn.addEventListener('click', () => setGenView('arch'));
+
+      // ── Network graph helpers ──
+      // Connection line mapping: when a step activates, which lines light up?
+      const NET_LINES = {
+        architect:  { incoming: [], outgoing: ['net-line-arch-char'] },
+        characters: { incoming: ['net-line-arch-char'], outgoing: ['net-line-char-dir'] },
+        director:   { incoming: ['net-line-char-dir'], outgoing: ['net-line-dir-creative'] },
+        creative:   { incoming: ['net-line-dir-creative'], outgoing: ['net-line-cr-env','net-line-cr-props','net-line-cr-chars','net-line-creative-world'] },
+        world:      { incoming: ['net-line-creative-world'], outgoing: [] },
+      };
+      const NET_SUB_MAP = {
+        env: 'creative-env',
+        props: 'creative-props',
+        chars: 'creative-chars',
+      };
+
+      function setNetNodeState(stepId, state) {
+        const node = document.getElementById('net-node-' + stepId);
+        if (!node) return;
+        node.classList.remove('active','done');
+        if (state === 'active' || state === 'done') node.classList.add(state);
+
+        const lineConfig = NET_LINES[stepId];
+        if (!lineConfig) return;
+        if (state === 'active') {
+          for (const lid of lineConfig.incoming) {
+            const line = document.getElementById(lid);
+            if (line) { line.classList.remove('done'); line.classList.add('active'); }
+          }
+        } else if (state === 'done') {
+          for (const lid of lineConfig.incoming) {
+            const line = document.getElementById(lid);
+            if (line) { line.classList.remove('active'); line.classList.add('done'); }
+          }
+        }
+      }
+
+      function setNetSubState(sub, state) {
+        const nodeId = NET_SUB_MAP[sub];
+        if (!nodeId) return;
+        const node = document.getElementById('net-node-' + nodeId);
+        if (!node) return;
+        node.classList.remove('active','done');
+        if (state === 'active' || state === 'done') node.classList.add(state);
+        // Sub-lines
+        const lineId = 'net-line-cr-' + sub;
+        const line = document.getElementById(lineId);
+        if (line) {
+          line.classList.remove('active','done');
+          if (state === 'active') line.classList.add('active');
+          else if (state === 'done') line.classList.add('done');
+        }
+      }
+
+      function addNetDataPill(text, x, y) {
+        const container = document.getElementById('gen-net-data-items');
+        if (!container) return;
+        const pill = document.createElement('div');
+        pill.className = 'gen-net-pill';
+        pill.textContent = text;
+        pill.style.left = x + 'px';
+        pill.style.top = y + 'px';
+        container.appendChild(pill);
+        setTimeout(() => pill.remove(), 3200);
+      }
+
+      // Reset network nodes
+      document.querySelectorAll('.gen-net-node').forEach(n => n.classList.remove('active','done'));
+      document.querySelectorAll('.gen-net-line').forEach(l => l.classList.remove('active','done'));
+      const netDataItems = document.getElementById('gen-net-data-items');
+      if (netDataItems) netDataItems.innerHTML = '';
+
+      // ── Architecture view helpers ──
+      // Track NPC card positions for dynamic SVG line drawing
+      const archNpcCards = []; // { id, name, el }
+
+      function archDrawLines() {
+        const svg = document.getElementById('gen-arch-svg');
+        if (!svg) return;
+        svg.innerHTML = '';
+        const archRect = document.getElementById('gen-arch')?.getBoundingClientRect();
+        if (!archRect) return;
+
+        function nodeCenter(id) {
+          const el = document.getElementById(id);
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          return { x: r.left + r.width / 2 - archRect.left, y: r.top + r.height / 2 - archRect.top };
+        }
+        function npcCenter(cardEl) {
+          const r = cardEl.getBoundingClientRect();
+          return { x: r.left + r.width / 2 - archRect.left, y: r.top + r.height / 2 - archRect.top };
+        }
+        function addLine(from, to, cls) {
+          if (!from || !to) return;
+          const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+          line.setAttribute('x1', from.x); line.setAttribute('y1', from.y);
+          line.setAttribute('x2', to.x); line.setAttribute('y2', to.y);
+          line.setAttribute('class', 'arch-line ' + cls);
+          svg.appendChild(line);
+        }
+
+        const player = nodeCenter('arch-node-player');
+        const director = nodeCenter('arch-node-director');
+        const state = nodeCenter('arch-node-state');
+        const profiler = nodeCenter('arch-node-profiler');
+        const narrator = nodeCenter('arch-node-narrator');
+        const forensics = nodeCenter('arch-node-forensics');
+        const skeleton = nodeCenter('arch-node-skeleton');
+        const creative = nodeCenter('arch-node-creative');
+
+        // Player → Profiler
+        addLine(player, profiler, 'arch-async done');
+        // Player → GameState
+        addLine(player, state, 'done');
+        // Director → GameState
+        addLine(director, state, 'arch-gen done');
+        // GameState → Narrator
+        addLine(state, narrator, 'arch-async done');
+        // GameState → Forensics
+        addLine(state, forensics, 'arch-async done');
+        // Skeleton Key → Director
+        addLine(skeleton, director, 'arch-gen done');
+        // Creative → Skeleton Key
+        addLine(creative, skeleton, 'arch-gen done');
+
+        // NPC connections — each NPC connects to Player, Director, GameState, and each other
+        for (const npc of archNpcCards) {
+          const c = npcCenter(npc.el);
+          // Player ↔ NPC (interrogation)
+          addLine(player, c, 'done');
+          // NPC → GameState (tool calls)
+          addLine(c, state, 'arch-tool done');
+          // Director ↔ NPC (night conversations)
+          addLine(director, c, 'arch-gen done');
+        }
+        // NPC ↔ NPC gossip lines (hooks) — connect adjacent pairs
+        for (let i = 0; i < archNpcCards.length - 1; i++) {
+          const a = npcCenter(archNpcCards[i].el);
+          const b = npcCenter(archNpcCards[i + 1].el);
+          addLine(a, b, 'arch-hook done');
+        }
+
+        // Update SVG viewBox to match container
+        svg.setAttribute('viewBox', `0 0 ${archRect.width} ${archRect.height}`);
+      }
+
+      function setArchState(stepId, state) {
+        // Light up system nodes based on generation step
+        const nodeMap = {
+          architect: ['skeleton', 'state'],
+          characters: [],
+          director: ['director'],
+          creative: ['creative'],
+          world: ['state'],
+        };
+        const nodeIds = nodeMap[stepId] || [];
+        for (const nid of nodeIds) {
+          const node = document.getElementById('arch-node-' + nid);
+          if (node) { node.classList.remove('active','done'); if (state) node.classList.add(state); }
+        }
+      }
+
+      function addArchNpc(name, role) {
+        const row = document.getElementById('arch-npc-row');
+        if (!row) return;
+        const card = document.createElement('div');
+        card.className = 'arch-npc-card active';
+        // Pick an emoji based on role keywords
+        const roleLC = (role || '').toLowerCase();
+        let emoji = '🧑';
+        if (roleLC.includes('doctor') || roleLC.includes('physician') || roleLC.includes('medic')) emoji = '👨‍⚕️';
+        else if (roleLC.includes('chef') || roleLC.includes('cook')) emoji = '👨‍🍳';
+        else if (roleLC.includes('captain') || roleLC.includes('officer')) emoji = '👮';
+        else if (roleLC.includes('maid') || roleLC.includes('housekeeper') || roleLC.includes('servant')) emoji = '🧹';
+        else if (roleLC.includes('wife') || roleLC.includes('lady') || roleLC.includes('woman') || roleLC.includes('daughter') || roleLC.includes('sister') || roleLC.includes('hostess') || roleLC.includes('actress')) emoji = '👩';
+        else if (roleLC.includes('artist') || roleLC.includes('painter') || roleLC.includes('musician')) emoji = '🎨';
+        else if (roleLC.includes('lawyer') || roleLC.includes('attorney') || roleLC.includes('judge')) emoji = '⚖️';
+        else if (roleLC.includes('business') || roleLC.includes('partner') || roleLC.includes('investor') || roleLC.includes('dealer')) emoji = '💼';
+        else if (roleLC.includes('guard') || roleLC.includes('security') || roleLC.includes('bodyguard')) emoji = '🛡️';
+        else if (roleLC.includes('scientist') || roleLC.includes('professor') || roleLC.includes('researcher')) emoji = '🔬';
+        else if (roleLC.includes('journalist') || roleLC.includes('reporter') || roleLC.includes('writer')) emoji = '📰';
+        else if (roleLC.includes('bartender') || roleLC.includes('waiter')) emoji = '🍸';
+        card.innerHTML = `<div class="arch-npc-emoji">${emoji}</div><div class="arch-npc-name" title="${name}">${name.split(' ')[0]}</div><div class="arch-npc-role">${role || 'suspect'}</div>`;
+        row.appendChild(card);
+        archNpcCards.push({ name, el: card });
+        // Re-draw lines after layout settles
+        requestAnimationFrame(() => requestAnimationFrame(archDrawLines));
+      }
+
+      // Reset architecture view
+      document.querySelectorAll('.arch-node').forEach(n => n.classList.remove('active','done'));
+      const archNpcRow = document.getElementById('arch-npc-row');
+      if (archNpcRow) archNpcRow.innerHTML = '';
+      archNpcCards.length = 0;
+      const archSvg = document.getElementById('gen-arch-svg');
+      if (archSvg) archSvg.innerHTML = '';
+
       overlay.classList.remove('hidden');
       levelSelect.classList.add('hidden');
 
@@ -146,7 +376,7 @@ document.querySelectorAll('.level-btn').forEach(btn => {
         genLog.scrollTop = genLog.scrollHeight;
       }
 
-      /** Mark a pipeline step active/done */
+      /** Mark a pipeline step active/done (both list + network + arch views) */
       function setStepState(stepId, state) {
         const el = document.getElementById('gen-step-' + stepId);
         if (!el) return;
@@ -158,6 +388,9 @@ document.querySelectorAll('.level-btn').forEach(btn => {
           el.classList.add('done');
           el.querySelector('.gen-step-state').textContent = '✓ done';
         }
+        // Also update network graph + architecture view
+        setNetNodeState(stepId, state);
+        setArchState(stepId, state);
       }
 
       // Map agent names → pipeline step IDs
@@ -216,13 +449,17 @@ document.querySelectorAll('.level-btn').forEach(btn => {
             if (update.crime) logEntry(`🔪 Crime: ${update.crime}`, 'entry-data');
             if (Array.isArray(update.characters)) {
               logEntry(`👥 Suspects: ${update.characters.map(c => `${c.name} (${c.role})`).join(', ')}`, 'entry-data');
+              addNetDataPill(`${update.characters.length} suspects`, 210, 65);
             }
             if (Array.isArray(update.rooms)) {
               logEntry(`🏠 Rooms: ${update.rooms.join(', ')}`, 'entry-data');
+              addNetDataPill(`${update.rooms.length} rooms`, 210, 90);
             }
 
           } else if (phase === 'character_done') {
             logEntry(`✅ ${update.characterName} - ${update.characterRole}`, 'entry-data');
+            addNetDataPill(update.characterName, 390, 65);
+            addArchNpc(update.characterName, update.characterRole);
 
           } else if (phase === 'director_done') {
             setStepState('director', 'done');
@@ -246,6 +483,8 @@ document.querySelectorAll('.level-btn').forEach(btn => {
                 subEl.style.borderColor = 'rgba(244,67,54,0.3)';
               }
             }
+            // Update network sub-nodes
+            setNetSubState(update.sub, update.state === 'failed' ? 'done' : update.state);
             if (update.palette) {
               const p = update.palette;
               logEntry(`🎨 Style: ${p.furnitureStyle || '-'} | Weather: ${p.weather || '-'} | Layout: ${p.roomLayout || '-'}`, 'entry-data');
@@ -272,6 +511,17 @@ document.querySelectorAll('.level-btn').forEach(btn => {
             }
             logEntry(`🎉 "${update.title}" is ready -- ${update.suspects} suspects, ${update.evidenceCount} clues`, 'entry-complete');
             if (genSubtitle) genSubtitle.textContent = `"${update.title}" -- entering the scene...`;
+            // Light up all runtime architecture nodes to show the full system is ready
+            ['player','director','profiler','state','narrator','forensics'].forEach(nid => {
+              const n = document.getElementById('arch-node-' + nid);
+              if (n) { n.classList.remove('active'); n.classList.add('done'); }
+            });
+            // Mark all NPC cards as done
+            for (const npc of archNpcCards) {
+              npc.el.classList.remove('active');
+              npc.el.classList.add('done');
+            }
+            archDrawLines();
 
           } else if (phase === 'error' || update.error) {
             logEntry(update.status || 'Generation failed', 'entry-error');

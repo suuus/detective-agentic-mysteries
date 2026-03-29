@@ -8,6 +8,7 @@ import { createGameTools } from "./src/tools.js";
 import { createDirectorTools, DIRECTOR_SYSTEM_PROMPT, ALL_ROOM_POSITIONS } from "./src/director.js";
 import { createNarratorTools, NARRATOR_SYSTEM_PROMPT } from "./src/narrator.js";
 import { createProfilerTools, PROFILER_SYSTEM_PROMPT } from "./src/profiler.js";
+import { createPsychologistTools, PSYCHOLOGIST_SYSTEM_PROMPT } from "./src/psychologist.js";
 import { characters } from "./src/characters/index.js";
 import { cruiseCharacters } from "./src/characters/cruise/index.js";
 import { CRUISE_CONFIG } from "./src/levels/cruise.js";
@@ -300,6 +301,86 @@ async function getProfilerSession(): Promise<CopilotSession> {
   return profilerSession;
 }
 
+// ── Psychologist Agent ───────────────────────────────────────────
+const psychologistTools = createPsychologistTools(gameState);
+let psychologistSession: CopilotSession | null = null;
+
+async function getPsychologistSession(): Promise<CopilotSession> {
+  if (psychologistSession) return psychologistSession;
+  try { await client.deleteSession("blackwood-psychologist"); } catch {}
+  psychologistSession = await client.createSession({
+    sessionId: "blackwood-psychologist",
+    model: modelSettings.profiler, // shares model setting with profiler
+    streaming: false,
+    tools: psychologistTools,
+    onPermissionRequest: approveAll,
+    infiniteSessions: { enabled: false },
+    systemMessage: { mode: "replace", content: PSYCHOLOGIST_SYSTEM_PROMPT },
+  });
+  return psychologistSession;
+}
+
+/** Fire-and-forget: Psychologist analyzes an interrogation exchange and updates NPC emotions. */
+async function analyzeEmotions(characterId: string, playerMsg: string, npcResponse: string): Promise<void> {
+  try {
+    const psych = await getPsychologistSession();
+    const charName = getActiveCharacters().find((c: any) => c.id === characterId)?.name ?? characterId;
+    const sentiment = gameState.getSentimentDescription(characterId);
+    const profile = gameState.getPlayerProfile();
+    const questionCount = profile.questionCount;
+
+    await psych.sendAndWait({
+      prompt: `Analyze this interrogation exchange and update ${charName}'s emotional state.
+
+CHARACTER: ${charName} (id: ${characterId})
+CURRENT EMOTIONAL STATE: ${sentiment}
+DETECTIVE STYLE: ${profile.style} (${profile.lastAnalysis || 'no profile yet'})
+QUESTION #${questionCount} THIS GAME
+
+DETECTIVE SAID: "${playerMsg.slice(0, 400)}"
+
+${charName} RESPONDED: "${npcResponse.slice(0, 600)}"
+
+Based on the exchange, the detective's approach, and ${charName}'s current emotional state, analyze what ${charName} is feeling now. Consider:
+- Did the detective's tone threaten or reassure them?
+- Did ${charName}'s response reveal emotional shifts (fear, anger, openness)?
+- How does accumulated questioning pressure affect them?
+- Would this exchange change how ${charName} feels about the detective?
+
+Call update_npc_emotion with your assessment. If nothing emotionally significant happened, confirm the current state.`
+    }, 20_000);
+  } catch (err: any) {
+    console.warn("🧠 Psychologist analysis failed:", err.message);
+  }
+}
+
+/** Fire-and-forget: Psychologist analyzes the emotional impact of showing evidence to an NPC. */
+async function analyzeEvidenceReaction(characterId: string, charName: string, evidenceName: string, evidenceDesc: string): Promise<void> {
+  try {
+    const psych = await getPsychologistSession();
+    const sentiment = gameState.getSentimentDescription(characterId);
+
+    await psych.sendAndWait({
+      prompt: `The detective just showed physical evidence to ${charName}. Analyze the emotional impact.
+
+CHARACTER: ${charName} (id: ${characterId})
+CURRENT EMOTIONAL STATE: ${sentiment}
+
+EVIDENCE SHOWN: "${evidenceName}" — ${evidenceDesc}
+
+Being confronted with physical evidence is psychologically significant. Consider:
+- Does this evidence implicate ${charName} directly or indirectly?
+- Would an innocent person be rattled? Would a guilty person panic?
+- How does their current emotional state affect their reaction?
+- Evidence confrontation typically increases anxiety and reduces trust in the detective
+
+Call update_npc_emotion with your assessment.`
+    }, 15_000);
+  } catch (err: any) {
+    console.warn("🧠 Evidence emotion analysis failed:", err.message);
+  }
+}
+
 async function profileDetective(characterId: string, question: string): Promise<void> {
   // Only analyze every 3rd question to avoid overhead
   const profile = gameState.getPlayerProfile();
@@ -492,12 +573,59 @@ function nudgeEmotion(characterId: string, playerMsg: string, npcResponse: strin
 async function planNight(): Promise<void> {
   console.log("🎬 Director is analyzing the situation...");
 
+  // Step 0: Get a psychological briefing from the Psychologist agent
+  let psychBriefing = '';
+  try {
+    console.log("🧠 Psychologist preparing night briefing...");
+    const psych = await getPsychologistSession();
+    const allSentiments = gameState.getAllSentiments();
+    const chars = getActiveCharacters();
+    const profile = gameState.getPlayerProfile();
+    const day = gameState.getCurrentDay();
+
+    const charSummaries = chars.map((c: any) => {
+      const s = allSentiments[c.id];
+      if (!s) return `- ${c.name}: no data`;
+      const others = Object.entries(s.towardOthers)
+        .map(([id, val]) => `${id}:${val}`)
+        .join(', ');
+      const recent = s.recentEmotions.length > 0 ? ` Recent: ${s.recentEmotions.slice(-3).join('; ')}` : '';
+      return `- ${c.name} (${c.id}): ${s.emotionalState}, trust=${s.towardDetective}, toward others=[${others}].${recent}`;
+    }).join('\n');
+
+    const result = await psych.sendAndWait({
+      prompt: `End of Day ${day}. The detective's style is "${profile.style}" (${profile.lastAnalysis || 'unknown'}).
+
+Here are all suspects' current psychological states:
+${charSummaries}
+
+Produce a BRIEF psychological briefing (3-5 sentences) for the Director who plans tonight's events. Focus on:
+- Who is most emotionally volatile and likely to crack, confront, or confess tonight?
+- Which relationships are under the most strain?
+- Who might seek each other out — for comfort, confrontation, or conspiracy?
+- Any predicted emotional escalations or breakdowns?
+
+Do NOT call any tools. Just respond with your briefing text.`
+    }, 20_000);
+    psychBriefing = result?.data?.content ?? '';
+    if (psychBriefing) {
+      console.log(`🧠 Psychologist briefing: ${psychBriefing.slice(0, 120)}...`);
+    }
+  } catch (err: any) {
+    console.warn("🧠 Psychologist briefing failed:", err.message);
+  }
+
   const npcCount = getActiveCharacters().length;
   const pairCount = npcCount >= 10 ? '4-5' : npcCount >= 6 ? '3-4' : '2-3';
+
+  const psychSection = psychBriefing
+    ? `\n\nPSYCHOLOGIST'S BRIEFING:\n${psychBriefing}\n\nUse this psychological insight to inform which characters should meet tonight and what emotional dynamics will drive their conversations.`
+    : '';
 
   const prompt = `Night has fallen after Day ${gameState.getCurrentDay()} of the investigation.
 
 Analyze the current game state by calling get_full_game_state, then review key interrogation details with get_conversation_history for any characters the detective spoke to today.
+${psychSection}
 
 Based on what happened today, submit your night plan using submit_night_plan. Consider:
 - What the detective discovered and how characters would react
@@ -823,11 +951,23 @@ app.post("/api/talk/:characterId", async (req, res) => {
   gameState.markInterrogated(characterId);
   gameState.recordQuestion();
 
-  // Inject emotional context so the NPC always knows their state
+  // Inject emotional context + detective profile so the NPC always adapts
   const sentimentCtx = gameState.getSentimentDescription(characterId);
-  const questionCount = gameState.getPlayerProfile().questionCount;
+  const profile = gameState.getPlayerProfile();
+  const reputation = gameState.getReputation();
+  const questionCount = profile.questionCount;
+
+  // Build detective profile section
+  let detectiveCtx = '';
+  if (profile.style !== 'unknown') {
+    const gossipSnippet = reputation.gossipLog.length > 0
+      ? ` Other suspects say: "${reputation.gossipLog.slice(-2).join('" and "')}"`
+      : '';
+    detectiveCtx = `\n[DETECTIVE PROFILE — this detective is ${profile.style}. ${profile.lastAnalysis || ''} Their reputation among suspects: ${reputation.style}.${gossipSnippet} Adapt your behavior accordingly — be more guarded with aggressive detectives, more cautious with manipulative ones, and consider opening up to sympathetic ones if your trust is high enough.]`;
+  }
+
   const enrichedMessage = `[EMOTIONAL CONTEXT — your current feelings: ${sentimentCtx}]
-[This is question #${questionCount} from the detective. Let your emotions influence your tone and willingness to cooperate. Update your emotional state with update_sentiment if your feelings shift.]
+[This is question #${questionCount} from the detective. Let your emotions influence your tone and willingness to cooperate. Update your emotional state with update_sentiment if your feelings shift.]${detectiveCtx}
 
 ${message}`;
 
@@ -861,9 +1001,10 @@ ${message}`;
       console.error("Contradiction analysis failed:", err.message)
     );
 
-    // Server-side emotion nudge — detect tone of the player's message and
-    // apply small sentiment shifts so emotions aren't purely tool-dependent.
-    nudgeEmotion(characterId, message, fullResponse);
+    // Psychologist agent analyzes emotional dynamics (fire and forget — replaces regex nudgeEmotion)
+    analyzeEmotions(characterId, message, fullResponse).catch(err =>
+      console.warn("Emotion analysis failed:", err.message)
+    );
 
     // Note: Eavesdropping is now handled by onPostToolUse hooks — NPC tool calls
     // (reveal_clue, show_body_language, update_sentiment) automatically propagate
@@ -969,30 +1110,14 @@ app.post("/api/evidence/:evidenceId/show/:characterId", (req, res) => {
     return;
   }
 
-  // Showing evidence always causes an emotional reaction
-  const s = gameState.getSentiment(characterId);
-  if (s) {
-    const ev = gameState.getEvidence(evidenceId);
-    const evName = ev?.name || evidenceId;
-    if (s.emotionalState === 'calm') {
-      gameState.updateSentiment(characterId, {
-        emotionalState: 'nervous',
-        towardDetective: -1,
-        emotionNote: `Became nervous when shown ${evName}`,
-      });
-    } else if (s.emotionalState === 'nervous' || s.emotionalState === 'defensive') {
-      gameState.updateSentiment(characterId, {
-        emotionalState: Math.random() < 0.5 ? 'scared' : 'defensive',
-        towardDetective: -1,
-        emotionNote: `Visibly rattled when confronted with ${evName}`,
-      });
-    } else {
-      gameState.updateSentiment(characterId, {
-        towardDetective: -1,
-        emotionNote: `Reacted to being shown ${evName}`,
-      });
-    }
-  }
+  // Psychologist analyzes the emotional impact of showing evidence (fire-and-forget)
+  const ev = gameState.getEvidence(evidenceId);
+  const evName = ev?.name || evidenceId;
+  const evDesc = ev?.description || '';
+  const charName = getActiveCharacters().find((c: any) => c.id === characterId)?.name ?? characterId;
+  analyzeEvidenceReaction(characterId, charName, evName, evDesc).catch(err =>
+    console.warn("Evidence emotion analysis failed:", err.message)
+  );
 
   res.json({ shown: true, evidenceId, characterId });
 });
@@ -1214,6 +1339,15 @@ async function conductNightConversations(): Promise<NightConversation[]> {
   const investigationSummary = gameState.getInvestigationSummary();
   const conversations: NightConversation[] = [];
 
+  // Build detective assessment for night conversations
+  const profile = gameState.getPlayerProfile();
+  const reputation = gameState.getReputation();
+  let detectiveAssessment = '';
+  if (profile.style !== 'unknown') {
+    const gossip = reputation.gossipLog.slice(-3);
+    detectiveAssessment = `\nYOUR IMPRESSION OF THE DETECTIVE: The detective is a ${profile.style} investigator${profile.lastAnalysis ? ` — ${profile.lastAnalysis}` : ''}. ${reputation.style !== 'unknown' ? `The general consensus among suspects is that the detective is ${reputation.style}.` : ''} ${gossip.length > 0 ? `You've heard: ${gossip.join('; ')}` : ''} This shapes how you feel about cooperating and what you might tell ${profile.style === 'aggressive' ? 'them — you might resent their approach or feel cornered' : profile.style === 'sympathetic' ? 'them — you might feel more inclined to open up, or suspicious of their kindness' : profile.style === 'manipulative' ? 'them — be wary, they play people against each other' : 'them'}.`;
+  }
+
   for (const pair of pairs) {
     const [idA, idB] = pair.ids;
     const charA = getActiveCharacters().find((c: any) => c.id === idA);
@@ -1235,6 +1369,7 @@ async function conductNightConversations(): Promise<NightConversation[]> {
 Scene: Late night at Blackwood Manor. You find ${nameB} in ${pair.location}. ${pair.scenario}
 
 YOUR CURRENT EMOTIONAL STATE: ${sentA}
+${detectiveAssessment}
 
 WHAT HAPPENED TODAY: ${investigationSummary}
 
@@ -1242,6 +1377,7 @@ Speak to ${nameB} as yourself — not to the detective. Be raw, honest, emotiona
 - Express fear, suspicion, anger, desperation, affection, or betrayal
 - Accuse them, confide in them, plead with them, or threaten them
 - Reference what the detective asked you today and how it made you feel
+- Discuss the detective's methods and whether to cooperate or stonewall
 - Share gossip about other suspects, speculate about the murder
 - Act on your feelings toward ${nameB} — trust them, distrust them, whatever you truly feel right now
 
@@ -1257,12 +1393,13 @@ Be vivid and natural. This isn't a formal interrogation — it's real people tal
 Scene: Late night, ${pair.location}. ${pair.scenario}
 
 YOUR CURRENT EMOTIONAL STATE: ${sentB}
+${detectiveAssessment}
 
 WHAT HAPPENED TODAY: ${investigationSummary}
 
 ${nameA} just said: "${responseA1}"
 
-React genuinely. This is private — no detective, no performance. Be emotional, be real. You can push back, break down, confess something, get angry, show vulnerability, or be manipulative. Let your feelings toward ${nameA} and about the murder shape how you respond.`;
+React genuinely. This is private — no detective, no performance. Be emotional, be real. You can push back, break down, confess something, get angry, show vulnerability, or be manipulative. Let your feelings toward ${nameA} and about the murder shape how you respond. If the detective's methods came up, share how they treated you.`;
 
       const responseB1 = await sendAndCollect(idB, promptB1);
       if (!responseB1) { console.warn(`⚠️  No response from ${nameB}, skipping rest of pair`); continue; }
@@ -2130,6 +2267,11 @@ app.post("/api/level/select", async (req, res) => {
     try { await client.deleteSession("blackwood-profiler"); } catch {}
     profilerSession = null;
   }
+  if (psychologistSession) {
+    try { await psychologistSession.disconnect(); } catch {}
+    try { await client.deleteSession("blackwood-psychologist"); } catch {}
+    psychologistSession = null;
+  }
   console.log("🧹 All sessions cleared and deleted for fresh start");
 
   activeLevel = levelId;
@@ -2712,6 +2854,11 @@ app.post("/api/reset", async (_req, res) => {
     try { await profilerSession.disconnect(); } catch {}
     try { await client.deleteSession("blackwood-profiler"); } catch {}
     profilerSession = null;
+  }
+  if (psychologistSession) {
+    try { await psychologistSession.disconnect(); } catch {}
+    try { await client.deleteSession("blackwood-psychologist"); } catch {}
+    psychologistSession = null;
   }
   // Clean up red herring session
   if (redHerringSession) {

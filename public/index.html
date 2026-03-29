@@ -50,7 +50,14 @@
       <h2 id="gen-panel-title">🕵️ Agents at Work</h2>
       <p id="gen-panel-subtitle" style="opacity:0.55;font-size:0.85rem;margin-bottom:20px">Your AI agents are designing a unique mystery...</p>
 
-      <!-- Pipeline steps -->
+      <!-- View toggle -->
+      <div id="gen-view-toggle" style="text-align:right;margin-bottom:12px">
+        <button id="gen-view-list-btn" class="gen-view-btn active" title="List view">📋</button>
+        <button id="gen-view-graph-btn" class="gen-view-btn" title="Network view">🔗</button>
+        <button id="gen-view-arch-btn" class="gen-view-btn" title="Architecture view">🏗️</button>
+      </div>
+
+      <!-- Pipeline steps (list view) -->
       <div id="gen-pipeline">
         <div class="gen-step" id="gen-step-architect">
           <div class="gen-step-icon">🏛️</div>
@@ -117,6 +124,120 @@
             <div class="gen-step-desc">Assembling rooms, evidence &amp; positions</div>
           </div>
           <div class="gen-step-state">waiting</div>
+        </div>
+      </div>
+
+      <!-- Network graph view (hidden by default) -->
+      <div id="gen-network" class="gen-network hidden">
+        <svg id="gen-net-svg" class="gen-net-svg" viewBox="0 0 600 400" preserveAspectRatio="xMidYMid meet">
+          <!-- Connection lines -->
+          <line class="gen-net-line" id="net-line-arch-char" x1="120" y1="80" x2="300" y2="80"/>
+          <line class="gen-net-line" id="net-line-char-dir" x1="300" y1="80" x2="480" y2="80"/>
+          <line class="gen-net-line" id="net-line-dir-creative" x1="480" y1="80" x2="300" y2="220"/>
+          <line class="gen-net-line" id="net-line-creative-world" x1="300" y1="220" x2="300" y2="360"/>
+          <!-- Creative sub-lines -->
+          <line class="gen-net-line gen-net-sub-line" id="net-line-cr-env" x1="300" y1="220" x2="140" y2="300"/>
+          <line class="gen-net-line gen-net-sub-line" id="net-line-cr-props" x1="300" y1="220" x2="300" y2="300"/>
+          <line class="gen-net-line gen-net-sub-line" id="net-line-cr-chars" x1="300" y1="220" x2="460" y2="300"/>
+        </svg>
+        <!-- Agent nodes -->
+        <div class="gen-net-node" id="net-node-architect" style="left:120px;top:80px">
+          <div class="gen-net-icon">🏛️</div>
+          <div class="gen-net-label">Architect</div>
+          <div class="gen-net-status"></div>
+        </div>
+        <div class="gen-net-node" id="net-node-characters" style="left:300px;top:80px">
+          <div class="gen-net-icon">📝</div>
+          <div class="gen-net-label">Characters</div>
+          <div class="gen-net-status"></div>
+        </div>
+        <div class="gen-net-node" id="net-node-director" style="left:480px;top:80px">
+          <div class="gen-net-icon">🎬</div>
+          <div class="gen-net-label">Director</div>
+          <div class="gen-net-status"></div>
+        </div>
+        <div class="gen-net-node" id="net-node-creative" style="left:300px;top:220px">
+          <div class="gen-net-icon">🎨</div>
+          <div class="gen-net-label">Creative</div>
+          <div class="gen-net-status"></div>
+        </div>
+        <div class="gen-net-node gen-net-sub" id="net-node-creative-env" style="left:140px;top:300px">
+          <div class="gen-net-icon">🌆</div>
+          <div class="gen-net-label">Env</div>
+        </div>
+        <div class="gen-net-node gen-net-sub" id="net-node-creative-props" style="left:300px;top:300px">
+          <div class="gen-net-icon">🪑</div>
+          <div class="gen-net-label">Props</div>
+        </div>
+        <div class="gen-net-node gen-net-sub" id="net-node-creative-chars" style="left:460px;top:300px">
+          <div class="gen-net-icon">👤</div>
+          <div class="gen-net-label">Chars</div>
+        </div>
+        <div class="gen-net-node" id="net-node-world" style="left:300px;top:360px">
+          <div class="gen-net-icon">🗺️</div>
+          <div class="gen-net-label">World</div>
+          <div class="gen-net-status"></div>
+        </div>
+        <!-- Data flow labels (hidden by default, shown on events) -->
+        <div id="gen-net-data-items" class="gen-net-data-items"></div>
+      </div>
+
+      <!-- Architecture view — runtime game agent diagram -->
+      <div id="gen-arch" class="gen-arch hidden">
+        <!-- SVG lines drawn dynamically by JS -->
+        <svg id="gen-arch-svg" class="gen-arch-svg" viewBox="0 0 700 580" preserveAspectRatio="xMidYMid meet"></svg>
+
+        <!-- Static system agents (always shown) -->
+        <div class="arch-node arch-player" id="arch-node-player" style="left:60px;top:60px">
+          <div class="arch-icon">🕵️</div>
+          <div class="arch-label">Player</div>
+        </div>
+
+        <div class="arch-node" id="arch-node-director" style="left:640px;top:60px">
+          <div class="arch-icon">🎬</div>
+          <div class="arch-label">Director</div>
+        </div>
+
+        <div class="arch-node" id="arch-node-profiler" style="left:60px;top:280px">
+          <div class="arch-icon">🧠</div>
+          <div class="arch-label">Profiler</div>
+        </div>
+
+        <div class="arch-node arch-state" id="arch-node-state" style="left:350px;top:280px">
+          <div class="arch-icon">💾</div>
+          <div class="arch-label">GameState</div>
+          <div class="arch-detail">Evidence · Sentiments · Day/Night</div>
+        </div>
+
+        <div class="arch-node" id="arch-node-narrator" style="left:170px;top:440px">
+          <div class="arch-icon">📖</div>
+          <div class="arch-label">Narrator</div>
+        </div>
+
+        <div class="arch-node" id="arch-node-forensics" style="left:350px;top:440px">
+          <div class="arch-icon">🔬</div>
+          <div class="arch-label">Forensics</div>
+        </div>
+
+        <div class="arch-node" id="arch-node-skeleton" style="left:530px;top:440px">
+          <div class="arch-icon">🔑</div>
+          <div class="arch-label">Skeleton Key</div>
+        </div>
+
+        <div class="arch-node" id="arch-node-creative" style="left:640px;top:440px">
+          <div class="arch-icon">🎨</div>
+          <div class="arch-label">Creative Agency</div>
+        </div>
+
+        <!-- NPC agent nodes (populated dynamically as characters are generated) -->
+        <div id="arch-npc-row" class="arch-npc-row"></div>
+
+        <!-- Legend -->
+        <div class="arch-legend">
+          <span class="arch-legend-item"><span class="arch-legend-line arch-legend-solid"></span> Interrogation (SSE)</span>
+          <span class="arch-legend-item"><span class="arch-legend-line arch-legend-dashed"></span> Async agent</span>
+          <span class="arch-legend-item"><span class="arch-legend-line arch-legend-hook"></span> onPostToolUse hook</span>
+          <span class="arch-legend-item"><span class="arch-legend-line arch-legend-gen"></span> Night / generation</span>
         </div>
       </div>
 

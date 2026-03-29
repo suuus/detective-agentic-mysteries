@@ -215,16 +215,60 @@ export default class RandomBootScene extends Phaser.Scene {
       const costume = costumeLookup[char.id];
       this._tex('npc_' + char.id, 32, 32, g => {
         const cx=16, cy=16;
-        // Base body
+        // Base body (torso, skin, hair, legs — but NOT eyes yet)
         g.fillStyle(bodyCol); g.fillRect(cx-6,cy-2,12,14);
         g.fillStyle(0xe8c99b); g.fillRect(cx-5,cy-10,10,9);
         g.fillStyle(hairCol); g.fillRect(cx-5,cy-13,10,5);
-        g.fillStyle(0x222222); g.fillRect(cx-3,cy-6,2,2); g.fillRect(cx+1,cy-6,2,2);
         g.fillStyle(0x2a2a2a); g.fillRect(cx-4,cy+12,3,4); g.fillRect(cx+1,cy+12,3,4);
-        // AI costume overlay
-        if (costume) this._execDraw(g, costume);
+        // AI costume overlay — clamp to avoid obliterating the face/body
+        if (costume) this._execCostume(g, costume);
+        // Eyes drawn LAST so they're always visible on top of costume
+        g.fillStyle(0x222222); g.fillRect(cx-3,cy-6,2,2); g.fillRect(cx+1,cy-6,2,2);
       });
     });
+  }
+
+  /**
+   * Draw costume ops with safety: skip ops that would cover the face,
+   * force partial alpha on ops overlapping the head region.
+   */
+  _execCostume(g, ops) {
+    if (!Array.isArray(ops)) return;
+    // Head region: roughly x(11-21), y(3-15) on 32×32 canvas
+    const HEAD_LEFT = 11, HEAD_RIGHT = 21, HEAD_TOP = 3, HEAD_BOTTOM = 15;
+    for (const op of ops) {
+      if (!op || !op.op) continue;
+      // Skip giant fills that would cover the whole sprite
+      if (op.op === 'fill' && op.w >= 28 && op.h >= 28) continue;
+      // For rectangles overlapping the face, force transparency so features show through
+      if ((op.op === 'fill' || op.op === 'roundRect') && op.w > 6 && op.h > 6) {
+        const opRight = (op.x || 0) + (op.w || 0);
+        const opBottom = (op.y || 0) + (op.h || 0);
+        const overlapsHead = (op.x || 0) < HEAD_RIGHT && opRight > HEAD_LEFT
+                          && (op.y || 0) < HEAD_BOTTOM && opBottom > HEAD_TOP;
+        if (overlapsHead) {
+          // Draw with forced lower alpha so eyes/face still show
+          const c = this._hex(op.color);
+          const a = Math.min(typeof op.alpha === 'number' ? op.alpha : 1, 0.5);
+          if (op.op === 'fill') { g.fillStyle(c, a); g.fillRect(op.x, op.y, op.w, op.h); }
+          else { g.fillStyle(c, a); g.fillRoundedRect(op.x, op.y, op.w, op.h, op.r || 4); }
+          continue;
+        }
+      }
+      // Normal draw for non-overlapping ops
+      const c = this._hex(op.color);
+      const a = typeof op.alpha === 'number' ? op.alpha : 1;
+      switch (op.op) {
+        case 'fill':     g.fillStyle(c, a); g.fillRect(op.x, op.y, op.w, op.h); break;
+        case 'circle':   g.fillStyle(c, a); g.fillCircle(op.x, op.y, op.r); break;
+        case 'line':     g.lineStyle(op.width || 1, c, a); g.lineBetween(op.x1, op.y1, op.x2, op.y2); break;
+        case 'tri':      g.fillStyle(c, a); g.fillTriangle(op.x1, op.y1, op.x2, op.y2, op.x3, op.y3); break;
+        case 'stroke':   g.lineStyle(op.width || 1, c, a); g.strokeRect(op.x, op.y, op.w, op.h); break;
+        case 'ellipse':  g.fillStyle(c, a); g.fillEllipse(op.x, op.y, op.w, op.h); break;
+        case 'arc':      g.lineStyle(op.width || 1, c, a); g.beginPath(); g.arc(op.x, op.y, op.r, op.start || 0, op.end || Math.PI * 2, false); g.strokePath(); break;
+        case 'roundRect': g.fillStyle(c, a); g.fillRoundedRect(op.x, op.y, op.w, op.h, op.r || 4); break;
+      }
+    }
   }
 
   _genEvidence() {
