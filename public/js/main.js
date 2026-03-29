@@ -714,6 +714,25 @@ async function openModelSettings() {
   });
   settingsModels.appendChild(langRow);
 
+  // Game mode setting
+  let modeData = { mode: 'normal' };
+  try { modeData = await (await fetch('/api/settings/mode')).json(); } catch {}
+  const modeRow = document.createElement('div');
+  modeRow.className = 'settings-row';
+  modeRow.innerHTML = `<label>🧠 Game Mode</label><select id="mode-select">
+    <option value="normal" ${modeData.mode === 'normal' ? 'selected' : ''}>Normal</option>
+    <option value="psychological" ${modeData.mode === 'psychological' ? 'selected' : ''}>🌀 Psychological</option>
+  </select>
+  <div style="font-size:0.7rem;opacity:0.4;margin-top:4px;grid-column:1/-1">Psychological mode: NPCs gaslight, shift details, and create doubt. The narrator becomes unreliable. Not for the faint of heart.</div>`;
+  modeRow.querySelector('select').addEventListener('change', async (e) => {
+    await fetch('/api/settings/mode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: e.target.value }),
+    });
+  });
+  settingsModels.appendChild(modeRow);
+
   // Model settings
   for (const [agent, label] of Object.entries(AGENT_LABELS)) {
     const row = document.createElement('div');

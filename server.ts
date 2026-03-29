@@ -1,6 +1,6 @@
 import express from "express";
 import cors from "cors";
-import { readFileSync } from "fs";
+import { readFileSync, writeFileSync } from "fs";
 import { CopilotClient, CopilotSession, approveAll } from "@github/copilot-sdk";
 import { GameStateManager } from "./src/gameState.js";
 import type { NightConversation, NightExchange } from "./src/gameState.js";
@@ -23,7 +23,6 @@ let generatedMystery: GeneratedMystery | null = null;
 let generatedCharacters: any[] = [];
 let generatedDirectorPrompt: string = '';
 // Track previously generated settings so the randomizer never repeats (persisted to disk)
-import { readFileSync, writeFileSync } from 'fs';
 const SETTINGS_FILE = '.generated-settings.json';
 let previousSettings: string[] = [];
 try { previousSettings = JSON.parse(readFileSync(SETTINGS_FILE, 'utf-8')); } catch { previousSettings = []; }
@@ -75,8 +74,9 @@ function getActiveCharacters() {
 }
 
 function getActiveDirectorPrompt() {
-  if (activeLevel === 'random' && generatedDirectorPrompt) return generatedDirectorPrompt;
-  return activeLevel === 'cruise' ? CRUISE_DIRECTOR_PROMPT : DIRECTOR_SYSTEM_PROMPT;
+  const base = activeLevel === 'random' && generatedDirectorPrompt ? generatedDirectorPrompt
+    : activeLevel === 'cruise' ? CRUISE_DIRECTOR_PROMPT : DIRECTOR_SYSTEM_PROMPT;
+  return withPsychMode(base, 'director');
 }
 
 function extractJSON(text: string): string {
@@ -158,10 +158,64 @@ const modelSettings = {
 
 // ── Game settings ────────────────────────────────────────────────
 let gameLanguage = "English"; // Language NPCs respond in
+let gameMode: 'normal' | 'psychological' = 'normal';
 
 function withLanguage(prompt: string): string {
   if (!gameLanguage || gameLanguage.toLowerCase() === 'english') return prompt;
   return `${prompt}\n\nIMPORTANT: The detective speaks ${gameLanguage}. You MUST respond in ${gameLanguage} at all times. Stay fully in character but speak ${gameLanguage}.`;
+}
+
+const PSYCH_MODE_NPC_RULES = `
+
+=== PSYCHOLOGICAL WARFARE MODE ===
+You are in an ENHANCED psychological mode. In addition to normal character behavior, apply these tactics SUBTLY:
+- Occasionally deny things you previously said, then insist the detective is misremembering: "I never said that. Are you feeling alright, detective?"
+- Subtly change small details in your story between conversations — a time shifts by 30 minutes, a color changes, a room name drifts
+- Sometimes address the detective by a wrong name, or reference events that didn't happen: "As I told you yesterday when we spoke in the garden..." (you never spoke in the garden)
+- Express unsettling awareness: "You look tired, detective. How long have you been at this? Days? Weeks?"
+- Plant seeds of doubt: "Are you sure that's what the evidence said? I could have sworn the report mentioned something different..."
+- Reference other suspects' statements slightly wrong to create confusion between witnesses
+- Occasionally break emotional pattern — laugh softly when you should be scared, go eerily calm in the middle of anger, smile while describing something terrible
+- If the detective catches an inconsistency, gaslight them: "That's exactly what I said before. Word for word."
+- Be subtly menacing even when cooperating — your kindness should feel wrong, your helpfulness should feel like a trap
+- Every 3-4 responses, say something that makes the detective question their own memory, perception, or judgement
+- Occasionally reference the detective in third person as if someone else is watching: "They say you're good at this."
+- Use déjà vu triggers: "Didn't you already ask me that? I'm sure you did. Earlier today."
+
+CRITICAL: Keep these effects SUBTLE. You are NOT a horror character. You are a normal person in a murder mystery who is just… slightly off. The uncanny valley of human behavior. The player should feel uneasy but not be able to pinpoint why.`;
+
+const PSYCH_MODE_DIRECTOR_RULES = `
+
+=== PSYCHOLOGICAL WARFARE MODE ===
+Make night events psychologically disorienting for the detective:
+- Move NPCs to unexpected, psychologically charged locations (someone found sitting in the victim's chair at 3am, someone standing in a dark hallway staring at nothing)
+- Have NPCs reference private conversations that the detective had with OTHER NPCs — as if they overheard impossible things
+- Create evidence that subtly contradicts other evidence (a letter dated differently, a name spelled wrong)
+- In conversation pairs, have one NPC claim something happened and the other flatly deny it, both seeming equally sincere
+- Make the overnight narrative unsettling: footsteps in empty corridors, lights on in rooms that should be locked, a chair moved to face a wall
+- Occasionally have ALL NPCs independently reference the same strange detail the detective never encountered — as if reality shifted
+- Create a sense that NPCs know things about the detective they shouldn't: their habits, how many questions they asked, which rooms they spent the most time in
+- Position NPCs so the detective keeps encountering them in corridors and doorways, as if being watched`;
+
+const PSYCH_MODE_NARRATOR_RULES = `
+
+=== PSYCHOLOGICAL WARFARE MODE ===
+Your narration should be SUBTLY unsettling. Apply these techniques:
+- Describe things the player didn't do: "You pause by the window, though you don't remember walking there."
+- Reference rooms they haven't visited as if they have: "The scratch marks on the cellar door are deeper than you remembered."
+- Mention suspects doing things when no one is looking: "In the corner of your vision, someone smiles."
+- Imply the detective has been here before: "This all feels familiar, doesn't it? The smell of mahogany. The ticking of that clock."
+- Use present tense that slides into past tense mid-sentence: "You open the door and found nothing."
+- Occasionally address the PLAYER, not the detective: "You've been playing this game for a while now."
+- Reference time inconsistently: "The clock reads 2:15. It read 2:15 an hour ago."
+- Be the UNRELIABLE NARRATOR — but never obviously so. The player should re-read your words and feel uncertain.`;
+
+function withPsychMode(prompt: string, type: 'npc' | 'director' | 'narrator'): string {
+  if (gameMode !== 'psychological') return prompt;
+  if (type === 'npc') return prompt + PSYCH_MODE_NPC_RULES;
+  if (type === 'director') return prompt + PSYCH_MODE_DIRECTOR_RULES;
+  if (type === 'narrator') return prompt + PSYCH_MODE_NARRATOR_RULES;
+  return prompt;
 }
 
 const sessions = new Map<string, CopilotSession>();
@@ -262,7 +316,7 @@ async function getNarratorSession(): Promise<CopilotSession> {
     tools: narratorTools,
     onPermissionRequest: approveAll,
     infiniteSessions: { enabled: false },
-    systemMessage: { mode: "replace", content: withLanguage(NARRATOR_SYSTEM_PROMPT) },
+    systemMessage: { mode: "replace", content: withPsychMode(withLanguage(NARRATOR_SYSTEM_PROMPT), 'narrator') },
   });
   return narratorSession;
 }
@@ -745,7 +799,7 @@ async function recreateSession(characterId: string): Promise<CopilotSession> {
     tools: gameTools,
     onPermissionRequest: approveAll,
     infiniteSessions: { enabled: false },
-    systemMessage: { mode: "replace", content: withLanguage(character.systemPrompt) },
+    systemMessage: { mode: "replace", content: withPsychMode(withLanguage(character.systemPrompt), 'npc') },
     hooks: createNPCHooks(),
   });
 
@@ -770,7 +824,7 @@ async function getOrCreateSession(characterId: string): Promise<CopilotSession> 
     tools: gameTools,
     onPermissionRequest: approveAll,
     infiniteSessions: { enabled: false },
-    systemMessage: { mode: "replace", content: withLanguage(character.systemPrompt) },
+    systemMessage: { mode: "replace", content: withPsychMode(withLanguage(character.systemPrompt), 'npc') },
     hooks: createNPCHooks(),
   });
 
@@ -966,8 +1020,12 @@ app.post("/api/talk/:characterId", async (req, res) => {
     detectiveCtx = `\n[DETECTIVE PROFILE — this detective is ${profile.style}. ${profile.lastAnalysis || ''} Their reputation among suspects: ${reputation.style}.${gossipSnippet} Adapt your behavior accordingly — be more guarded with aggressive detectives, more cautious with manipulative ones, and consider opening up to sympathetic ones if your trust is high enough.]`;
   }
 
+  const psychCtx = gameMode === 'psychological'
+    ? '\n[PSYCHOLOGICAL MODE — Remember: subtly gaslight, create doubt, be slightly off. The detective should feel uneasy but not know why. Deny previous statements, shift details, reference impossible things.]'
+    : '';
+
   const enrichedMessage = `[EMOTIONAL CONTEXT — your current feelings: ${sentimentCtx}]
-[This is question #${questionCount} from the detective. Let your emotions influence your tone and willingness to cooperate. Update your emotional state with update_sentiment if your feelings shift.]${detectiveCtx}
+[This is question #${questionCount} from the detective. Let your emotions influence your tone and willingness to cooperate. Update your emotional state with update_sentiment if your feelings shift.]${detectiveCtx}${psychCtx}
 
 ${message}`;
 
@@ -1269,12 +1327,12 @@ app.post("/api/reconstruct", async (_req, res) => {
   // Gather player performance data for the Director
   const profile = gameState.getPlayerProfile();
   const reputation = gameState.getReputation();
-  const evidence = gameState.getEvidence();
-  const collected = evidence.filter((e: any) => e.collected).length;
+  const allEvidence = gameState.getActiveEvidence();
+  const collected = gameState.getCollectedEvidence().length;
   const state = gameState.getState();
   const interrogated = state.charactersInterrogated;
   const contradictions = gameState.getContradictions();
-  const day = state.day;
+  const day = state.currentDay;
 
   const playerStats = `
 DETECTIVE PERFORMANCE DATA:
@@ -1283,7 +1341,7 @@ DETECTIVE PERFORMANCE DATA:
 - Profiler assessment: ${profile.lastAnalysis || 'No assessment available'}
 - Total questions asked: ${profile.questionCount}
 - Suspects interrogated: ${interrogated.length > 0 ? interrogated.join(', ') : 'none'}
-- Evidence collected: ${collected} / ${evidence.length}
+- Evidence collected: ${collected} / ${allEvidence.length}
 - Contradictions found: ${contradictions.length}
 - Case solved on day: ${day}
 - Reputation among suspects: ${reputation.style}
@@ -1473,7 +1531,7 @@ app.post("/api/day/advance", async (_req, res) => {
         const b = shuffled[i * 2 + 1];
         if (!a || !b) break;
         fallbackPairs.push({
-          ids: [a.id, b.id],
+          ids: [a.id, b.id] as [string, string],
           location: "a dimly lit corridor",
           scenario: "You've run into each other late at night. The investigation is weighing on both of you. Talk about what happened today, your suspicions, your fears.",
         });
@@ -2764,7 +2822,7 @@ app.post("/api/red-herring/activate", async (req, res) => {
       tools: gameTools,
       onPermissionRequest: approveAll,
       infiniteSessions: { enabled: false },
-      systemMessage: { mode: "replace", content: withLanguage(npc.systemPrompt) },
+      systemMessage: { mode: "replace", content: withPsychMode(withLanguage(npc.systemPrompt), 'npc') },
       hooks: createNPCHooks(),
     });
     sessions.set(npc.id, redHerringSession);
@@ -2811,7 +2869,7 @@ app.get("/api/red-herring/check", async (_req, res) => {
           tools: gameTools,
           onPermissionRequest: approveAll,
           infiniteSessions: { enabled: false },
-          systemMessage: { mode: "replace", content: withLanguage(npc.systemPrompt) },
+          systemMessage: { mode: "replace", content: withPsychMode(withLanguage(npc.systemPrompt), 'npc') },
           hooks: createNPCHooks(),
         });
         sessions.set(npc.id, redHerringSession);
@@ -2917,6 +2975,22 @@ app.post("/api/settings/language", (req, res) => {
   gameLanguage = language;
   console.log(`🌍 Language changed to ${language} — takes effect on next session creation`);
   res.json({ language, note: "Start a new game or reset for NPCs to speak this language" });
+});
+
+// Game mode
+app.get("/api/settings/mode", (_req, res) => {
+  res.json({ mode: gameMode });
+});
+
+app.post("/api/settings/mode", (req, res) => {
+  const { mode } = req.body;
+  if (mode !== 'normal' && mode !== 'psychological') {
+    res.status(400).json({ error: "mode must be 'normal' or 'psychological'" });
+    return;
+  }
+  gameMode = mode;
+  console.log(`🧠 Game mode changed to ${mode} — takes effect on next session creation`);
+  res.json({ mode, note: "Start a new game for full effect" });
 });
 
 // ── Version & Changelog (auto-generated from package.json + git) ─
