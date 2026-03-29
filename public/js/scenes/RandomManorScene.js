@@ -5,6 +5,7 @@ import { initNPCMovement, updateNPCMovement } from '../npcMovement.js';
 import { updateTimedEvent, checkTimedEventTrigger, cancelTimedEvent, completeTimedEvent, restoreFledNPCs } from '../timedEvents.js';
 import { updateChase, maybeChaseOnWrongAccusation } from '../chase.js';
 import { initNPCApproach, updateNPCApproach, isNPCApproaching } from '../npcApproach.js';
+import { initEmotionVisuals, syncEmotionPositions, cleanupEmotionVisuals } from '../npcEmotions.js';
 
 /**
  * RandomManorScene — dynamically built 2D manor from generated mystery data.
@@ -102,13 +103,36 @@ export default class RandomManorScene extends Phaser.Scene {
     this._setupCamera(T);
     this._setupInput();
     initNPCApproach(this);
+    initEmotionVisuals(this, this.npcs, this.npcLabels);
     this._createAmbientParticles();
 
     // Weather effects — use generated world data or randomize by theme
     createWeatherTextures(this);
     const _weatherType = world.visual?.weather
       || ['rain', 'fog', 'storm', 'snow', 'clear'][Math.floor(Math.random() * 5)];
-    createWeather(this, _weatherType, this.MAP_W, this.MAP_H, T);
+
+    // If creative agent designed custom weather, use its particle and config
+    const caWeather = world.creativeAssets?.weather;
+    if (caWeather?.config && this.textures.exists('weather_creative')) {
+      const wc = caWeather.config;
+      const worldW = this.MAP_W * T;
+      const worldH = this.MAP_H * T;
+      this.add.particles(0, 0, 'weather_creative', {
+        x: { min: -100, max: worldW + 100 },
+        y: wc.speedY?.min > 0 ? -20 : { min: 0, max: worldH },
+        lifespan: wc.lifespan || 3000,
+        speedY: wc.speedY || { min: 100, max: 200 },
+        speedX: wc.speedX || { min: -10, max: 10 },
+        alpha: wc.alpha || { start: 0.5, end: 0.1 },
+        scale: wc.scale || { start: 1, end: 0.6 },
+        frequency: wc.frequency || 40,
+        quantity: 1,
+        blendMode: wc.blendMode || 'ADD',
+        rotate: wc.rotate || { min: 0, max: 0 },
+      }).setDepth(90);
+    } else {
+      createWeather(this, _weatherType, this.MAP_W, this.MAP_H, T);
+    }
 
     // Room label HUD
     this.roomLabel = this.add.text(16, 16, '', {
@@ -850,8 +874,18 @@ export default class RandomManorScene extends Phaser.Scene {
   }
 
   _placeFurniture(T) {
-    // Place 1-2 furniture items per room
+    // Build furniture key list — include AI-designed custom furniture if available
     const furnKeys = ['furn_table', 'furn_desk', 'furn_bookshelf', 'furn_plant'];
+    const ca = window._generatedWorld?.creativeAssets;
+    if (Array.isArray(ca?.furniture)) {
+      for (const furn of ca.furniture) {
+        if (furn?._texKey && this.textures.exists(furn._texKey)) {
+          furnKeys.push(furn._texKey);
+        }
+      }
+    }
+
+    // Place 1-2 furniture items per room, preferring custom furniture when available
     const rooms = Object.values(this.rooms);
     for (const room of rooms) {
       const count = 1 + Math.floor(Math.random() * 2);
@@ -1138,6 +1172,7 @@ export default class RandomManorScene extends Phaser.Scene {
     this._handleMovement();
     if (this.multiFloor) this._checkStairs();
     updateNPCMovement(this, this.game.loop.delta);
+    syncEmotionPositions(this.npcs, this.npcLabels);
     updateTimedEvent(this, this.game.loop.delta);
     checkTimedEventTrigger(this);
     updateChase(this, this.game.loop.delta);

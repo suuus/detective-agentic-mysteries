@@ -5,6 +5,7 @@ import { initNPCMovement, updateNPCMovement } from '../npcMovement.js';
 import { updateTimedEvent, checkTimedEventTrigger, cancelTimedEvent, completeTimedEvent, restoreFledNPCs } from '../timedEvents.js';
 import { updateChase, maybeChaseOnWrongAccusation } from '../chase.js';
 import { initNPCApproach, updateNPCApproach, isNPCApproaching } from '../npcApproach.js';
+import { initEmotionVisuals, syncEmotionPositions, cleanupEmotionVisuals } from '../npcEmotions.js';
 
 /**
  * ManorScene — 2D manor with rooms, NPCs, and evidence.
@@ -109,6 +110,7 @@ export default class ManorScene extends Phaser.Scene {
     this._setupCamera(T);
     this._setupInput();
     initNPCApproach(this);
+    initEmotionVisuals(this, this.npcs, this.npcLabels);
     this._createAmbientParticles();
 
     // Show only ground floor initially
@@ -921,6 +923,7 @@ export default class ManorScene extends Phaser.Scene {
 
     this._handleMovement();
     updateNPCMovement(this, this.game.loop.delta);
+    syncEmotionPositions(this.npcs, this.npcLabels);
     updateTimedEvent(this, this.game.loop.delta);
     checkTimedEventTrigger(this);
     updateChase(this, this.game.loop.delta);

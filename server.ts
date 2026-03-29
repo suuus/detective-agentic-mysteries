@@ -14,7 +14,7 @@ import { CRUISE_CONFIG } from "./src/levels/cruise.js";
 import { CRUISE_DIRECTOR_PROMPT } from "./src/levels/cruise-director.js";
 import { buildSkeletonPrompt, buildCharacterPrompt, buildDirectorPromptRequest } from "./src/mystery-generator.js";
 import type { GeneratedMystery } from "./src/mystery-generator.js";
-import { buildCreativePrompt, getDefaultCreativeAssets } from "./src/creative-agent.js";
+import { buildEnvironmentPrompt, buildPropsPrompt, buildCharacterAssetsPrompt, getDefaultCreativeAssets } from "./src/creative-agent.js";
 import type { CreativeAssets } from "./src/creative-agent.js";
 
 let activeLevel: 'manor' | 'cruise' | 'random' = 'manor';
@@ -85,6 +85,50 @@ function extractJSON(text: string): string {
   const end = text.lastIndexOf('}');
   if (start !== -1 && end > start) return text.slice(start, end + 1);
   return text;
+}
+
+/** Attempt to repair truncated JSON by closing open brackets/braces/strings. */
+function repairTruncatedJSON(text: string): string {
+  try {
+    JSON.parse(text);
+    return text; // Already valid
+  } catch {}
+
+  // Strip any trailing incomplete key-value or comma
+  let repaired = text.replace(/,\s*$/, '');
+
+  // Count open brackets/braces to figure out what needs closing
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+  for (const ch of repaired) {
+    if (escaped) { escaped = false; continue; }
+    if (ch === '\\' && inString) { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{') stack.push('}');
+    else if (ch === '[') stack.push(']');
+    else if (ch === '}' || ch === ']') stack.pop();
+  }
+
+  // If we're in the middle of a string, close it
+  if (inString) repaired += '"';
+
+  // Close all remaining open structures
+  while (stack.length > 0) {
+    // Strip trailing comma before closing
+    repaired = repaired.replace(/,\s*$/, '');
+    repaired += stack.pop();
+  }
+
+  try {
+    JSON.parse(repaired);
+    console.log("  [repair] Successfully repaired truncated JSON");
+    return repaired;
+  } catch (e: any) {
+    console.warn("  [repair] Could not repair JSON:", e.message);
+    return text; // Return original, caller will handle the error
+  }
 }
 
 const app = express();
@@ -179,6 +223,28 @@ async function getDirectorSession(): Promise<CopilotSession> {
   });
 
   return directorSession;
+}
+
+/**
+ * Send a prompt to the Director with auto-recovery on stale sessions.
+ * If the session was externally destroyed, recreates it and retries.
+ */
+async function directorSendAndWait(prompt: string, timeoutMs: number): Promise<any> {
+  const maxAttempts = 2;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const session = await getDirectorSession();
+      return await session.sendAndWait({ prompt }, timeoutMs);
+    } catch (err: any) {
+      const isStale = err.message?.includes("Session not found") || err.message?.includes("not found");
+      console.error(`⚠️ Director attempt ${attempt} failed${isStale ? ' (stale session)' : ''}:`, err.message);
+      // Clean up the broken session
+      try { if (directorSession) await directorSession.abort(); } catch {}
+      try { if (directorSession) await directorSession.disconnect(); } catch {}
+      directorSession = null;
+      if (attempt === maxAttempts) throw err;
+    }
+  }
 }
 
 // ── Narrator Agent ───────────────────────────────────────────────
@@ -343,9 +409,88 @@ Return ONLY the JSON array, no other text.`
   }
 }
 
+// ── Server-side emotion nudging ──────────────────────────────────
+// Detects tone/content of the player's message and the NPC's response,
+// then applies small sentiment shifts so emotions stay dynamic even
+// when NPCs forget to call update_sentiment.
+function nudgeEmotion(characterId: string, playerMsg: string, npcResponse: string): void {
+  const msg = playerMsg.toLowerCase();
+  const resp = npcResponse.toLowerCase();
+  const s = gameState.getSentiment(characterId);
+  if (!s) return;
+
+  let detectiveDelta = 0;
+  let newState: string | undefined;
+  let note: string | undefined;
+
+  // Detect aggressive/threatening player tone
+  const aggressive = /\b(liar|lying|confess|admit it|guilty|murderer|killer|arrest you|you did it|stop lying|don't lie|truth now|threatening)\b/i;
+  const sympathetic = /\b(understand|sorry|must be hard|difficult time|trust me|help you|safe|protect|i believe|take your time)\b/i;
+  const evidence = /\b(evidence|proof|found|discovered|this shows|explain this|what about this)\b/i;
+
+  if (aggressive.test(playerMsg)) {
+    detectiveDelta = -1;
+    if (s.emotionalState === 'calm' || s.emotionalState === 'cooperative') {
+      newState = 'defensive';
+      note = 'Became defensive under aggressive questioning';
+    } else if (s.emotionalState === 'nervous') {
+      newState = 'scared';
+      note = 'Growing more frightened under pressure';
+    } else if (s.emotionalState === 'defensive') {
+      newState = Math.random() < 0.5 ? 'hostile' : 'desperate';
+      note = `Shifted to ${newState} after sustained pressure`;
+    }
+  } else if (sympathetic.test(playerMsg)) {
+    detectiveDelta = 1;
+    if (s.emotionalState === 'scared' || s.emotionalState === 'nervous') {
+      newState = 'nervous'; // stays nervous but trust goes up
+      note = 'Slightly reassured by detective\'s empathy';
+    } else if (s.emotionalState === 'defensive' || s.emotionalState === 'hostile') {
+      newState = 'defensive'; // deescalates slightly
+      note = 'Slightly less guarded after kind approach';
+    }
+  }
+
+  // Evidence presentation causes nervousness
+  if (evidence.test(playerMsg)) {
+    if (s.emotionalState === 'calm') {
+      newState = 'nervous';
+      note = 'Unsettled by evidence being presented';
+    }
+    detectiveDelta += s.towardDetective > 0 ? 0 : -1; // evidence against friendly NPCs is neutral
+  }
+
+  // Detect emotional cues in the NPC's own response
+  const responseScared = /\b(please|i beg|don't|scared|afraid|frightened|trembl|shak|panic)\b/i;
+  const responseAngry = /\b(how dare|outrageous|impertinen|accuse|slander|absurd|offensive|insulting)\b/i;
+  const responseCooperative = /\b(i'll tell|let me explain|you should know|between us|honestly|truth is|i confess|i admit)\b/i;
+
+  if (responseScared.test(npcResponse) && !newState) {
+    newState = s.emotionalState === 'calm' ? 'nervous' : 'scared';
+    note = 'Showing signs of fear in their response';
+  } else if (responseAngry.test(npcResponse) && !newState) {
+    newState = 'angry';
+    note = 'Reacting with visible anger';
+  } else if (responseCooperative.test(npcResponse) && !newState) {
+    if (s.emotionalState !== 'cooperative') {
+      newState = 'cooperative';
+      note = 'Opening up and becoming more cooperative';
+      detectiveDelta += 1;
+    }
+  }
+
+  // Apply if anything changed
+  if (detectiveDelta !== 0 || newState || note) {
+    gameState.updateSentiment(characterId, {
+      towardDetective: detectiveDelta || undefined,
+      emotionalState: newState,
+      emotionNote: note,
+    });
+  }
+}
+
 async function planNight(): Promise<void> {
   console.log("🎬 Director is analyzing the situation...");
-  const director = await getDirectorSession();
 
   const npcCount = getActiveCharacters().length;
   const pairCount = npcCount >= 10 ? '4-5' : npcCount >= 6 ? '3-4' : '2-3';
@@ -365,10 +510,10 @@ Based on what happened today, submit your night plan using submit_night_plan. Co
 Make ${pairCount} conversation pairs. Place all ${npcCount} NPCs for tomorrow. Add new evidence only if dramatically justified.`;
 
   try {
-    await director.sendAndWait({ prompt }, 120_000);
+    await directorSendAndWait(prompt, 180_000);
     console.log("✅ Director submitted night plan");
   } catch (err: any) {
-    console.error("⚠️ Director planning failed:", err.message);
+    console.error("❌ Director planning failed after all retries:", err.message);
   }
 }
 
@@ -678,6 +823,14 @@ app.post("/api/talk/:characterId", async (req, res) => {
   gameState.markInterrogated(characterId);
   gameState.recordQuestion();
 
+  // Inject emotional context so the NPC always knows their state
+  const sentimentCtx = gameState.getSentimentDescription(characterId);
+  const questionCount = gameState.getPlayerProfile().questionCount;
+  const enrichedMessage = `[EMOTIONAL CONTEXT — your current feelings: ${sentimentCtx}]
+[This is question #${questionCount} from the detective. Let your emotions influence your tone and willingness to cooperate. Update your emotional state with update_sentiment if your feelings shift.]
+
+${message}`;
+
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -685,7 +838,7 @@ app.post("/api/talk/:characterId", async (req, res) => {
 
   try {
     let fullResponse = '';
-    await talkWithRetry(characterId, message, (content) => {
+    await talkWithRetry(characterId, enrichedMessage, (content) => {
       fullResponse += content;
       res.write(`data: ${JSON.stringify({ content })}\n\n`);
     });
@@ -707,6 +860,10 @@ app.post("/api/talk/:characterId", async (req, res) => {
     analyzeContradictions(characterId, message, fullResponse).catch(err =>
       console.error("Contradiction analysis failed:", err.message)
     );
+
+    // Server-side emotion nudge — detect tone of the player's message and
+    // apply small sentiment shifts so emotions aren't purely tool-dependent.
+    nudgeEmotion(characterId, message, fullResponse);
 
     // Note: Eavesdropping is now handled by onPostToolUse hooks — NPC tool calls
     // (reveal_clue, show_body_language, update_sentiment) automatically propagate
@@ -811,6 +968,32 @@ app.post("/api/evidence/:evidenceId/show/:characterId", (req, res) => {
     });
     return;
   }
+
+  // Showing evidence always causes an emotional reaction
+  const s = gameState.getSentiment(characterId);
+  if (s) {
+    const ev = gameState.getEvidence(evidenceId);
+    const evName = ev?.name || evidenceId;
+    if (s.emotionalState === 'calm') {
+      gameState.updateSentiment(characterId, {
+        emotionalState: 'nervous',
+        towardDetective: -1,
+        emotionNote: `Became nervous when shown ${evName}`,
+      });
+    } else if (s.emotionalState === 'nervous' || s.emotionalState === 'defensive') {
+      gameState.updateSentiment(characterId, {
+        emotionalState: Math.random() < 0.5 ? 'scared' : 'defensive',
+        towardDetective: -1,
+        emotionNote: `Visibly rattled when confronted with ${evName}`,
+      });
+    } else {
+      gameState.updateSentiment(characterId, {
+        towardDetective: -1,
+        emotionNote: `Reacted to being shown ${evName}`,
+      });
+    }
+  }
+
   res.json({ shown: true, evidenceId, characterId });
 });
 
@@ -958,19 +1141,45 @@ app.post("/api/accuse", (req, res) => {
 
 // ── Crime Reconstruction ─────────────────────────────────────────
 app.post("/api/reconstruct", async (_req, res) => {
+  // Gather player performance data for the Director
+  const profile = gameState.getPlayerProfile();
+  const reputation = gameState.getReputation();
+  const evidence = gameState.getEvidence();
+  const collected = evidence.filter((e: any) => e.collected).length;
+  const state = gameState.getState();
+  const interrogated = state.charactersInterrogated;
+  const contradictions = gameState.getContradictions();
+  const day = state.day;
+
+  const playerStats = `
+DETECTIVE PERFORMANCE DATA:
+- Interrogation style: ${profile.style} (confidence: ${profile.confidence})
+- Behavioral traits: ${profile.traits.length > 0 ? profile.traits.join(', ') : 'none detected'}
+- Profiler assessment: ${profile.lastAnalysis || 'No assessment available'}
+- Total questions asked: ${profile.questionCount}
+- Suspects interrogated: ${interrogated.length > 0 ? interrogated.join(', ') : 'none'}
+- Evidence collected: ${collected} / ${evidence.length}
+- Contradictions found: ${contradictions.length}
+- Case solved on day: ${day}
+- Reputation among suspects: ${reputation.style}
+- NPC gossip about detective: ${reputation.gossipLog.length > 0 ? reputation.gossipLog.slice(-5).join('; ') : 'none'}`;
+
+  const reconstructPrompt = `The detective has solved the case. Narrate a cinematic crime reconstruction in 5-7 short paragraphs, THEN add a final paragraph assessing the detective's performance.
+
+CRIME RECONSTRUCTION (paragraphs 1-6):
+Each paragraph describes one moment: the lead-up, the motive crystallizing, the act itself, the cover-up, and the aftermath. Write in present tense, noir style. Include character names and locations. Keep each paragraph to 2-3 sentences.
+
+DETECTIVE ASSESSMENT (final paragraph):
+Based on the performance data below, write a final paragraph addressed to the detective in second person ("You..."). Comment on their interrogation style, how thorough they were, what they did well, and what they missed. Be specific — reference the number of questions, evidence found, days taken, and their approach. Keep it 3-4 sentences, maintaining the noir tone.
+
+${playerStats}`;
+
   try {
-    const session = await getDirectorSession();
-    const result = await session.sendAndWait(
-      {
-        prompt:
-          "The detective has solved the case. Narrate a cinematic crime reconstruction in 5-7 short paragraphs. Each paragraph describes one moment: the lead-up, the motive crystallizing, the act itself, the cover-up, and the aftermath. Write it in present tense, noir style. Include character names and locations. Keep each paragraph to 2-3 sentences.",
-      },
-      120_000,
-    );
+    const result = await directorSendAndWait(reconstructPrompt, 180_000);
     const text = result?.data?.content ?? "";
     res.json({ reconstruction: text });
   } catch (err: any) {
-    console.error("⚠️  Reconstruction failed:", err.message);
+    console.error("⚠️  Reconstruction failed after retries:", err.message);
     res.status(500).json({ error: "Reconstruction generation failed" });
   }
 });
@@ -1115,6 +1324,42 @@ app.post("/api/day/advance", async (_req, res) => {
     // Step 1: Director plans the night
     await planNight();
 
+    // If Director failed, generate fallback conversation pairs from active characters
+    if (!gameState.getDirectorPlan()) {
+      console.log("⚠️ No Director plan — generating fallback night conversation pairs");
+      const chars = getActiveCharacters();
+      const shuffled = [...chars].sort(() => Math.random() - 0.5);
+      const fallbackPairs = [];
+      const pairLimit = Math.min(Math.floor(shuffled.length / 2), 3);
+      for (let i = 0; i < pairLimit; i++) {
+        const a = shuffled[i * 2];
+        const b = shuffled[i * 2 + 1];
+        if (!a || !b) break;
+        fallbackPairs.push({
+          ids: [a.id, b.id],
+          location: "a dimly lit corridor",
+          scenario: "You've run into each other late at night. The investigation is weighing on both of you. Talk about what happened today, your suspicions, your fears.",
+        });
+      }
+      if (fallbackPairs.length > 0) {
+        gameState.setDirectorPlan({
+          conversations: fallbackPairs,
+          npcPositions: chars.map((c: any) => ({
+            id: c.id,
+            name: c.name,
+            location: "hallway",
+            x: 10 + Math.floor(Math.random() * 20),
+            y: 10 + Math.floor(Math.random() * 15),
+          })),
+          newEvidence: [],
+          movedEvidence: [],
+          removedEvidence: [],
+          overnightNarrative: "The night passed uneasily. Whispered conversations echoed through the halls as the suspects wrestled with their secrets.",
+          npcNightContext: {},
+        });
+      }
+    }
+
     // Step 2: Execute NPC-to-NPC conversations based on Director's plan
     console.log("🌙 Executing night conversations...");
     let conversations: NightConversation[] = [];
@@ -1175,37 +1420,109 @@ app.post("/api/day/advance", async (_req, res) => {
 });
 
 // ── Mystery generation ────────────────────────────────────────────
+let _generationInProgress = false;
+// Store generation events so clients can reconnect after proxy disconnects
+let _generationEvents: Record<string, any>[] = [];
+let _generationComplete = false;
+
+// Poll endpoint — client reconnects here after disconnect to get missed events
+app.get("/api/mystery/generate/status", (_req, res) => {
+  const afterIdx = parseInt(_req.query.after as string) || 0;
+  const events = _generationEvents.slice(afterIdx);
+  res.json({
+    inProgress: _generationInProgress,
+    complete: _generationComplete,
+    events,
+    nextIndex: _generationEvents.length,
+  });
+});
+
 app.post("/api/mystery/generate", async (_req, res) => {
+  // Prevent concurrent generations — they'd fight over the same session IDs
+  if (_generationInProgress) {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.flushHeaders();
+    res.write(`data: ${JSON.stringify({ phase: 'error', status: '❌ A mystery is already being generated. Please wait.', error: true })}\n\n`);
+    res.write("data: [DONE]\n\n");
+    res.end();
+    return;
+  }
+  _generationInProgress = true;
+  _generationEvents = [];
+  _generationComplete = false;
+
   console.log("🎲 Generating procedural mystery...");
 
   res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.setHeader("X-Content-Type-Options", "nosniff");
   res.flushHeaders();
 
   const sendEvent = (event: Record<string, any>) => {
-    res.write(`data: ${JSON.stringify(event)}\n\n`);
+    // Store for polling reconnect
+    if (event.phase !== 'heartbeat') _generationEvents.push(event);
+    try { res.write(`data: ${JSON.stringify(event)}\n\n`); } catch {}
   };
+
+  // Helper: send a prompt to a streaming session, collect full response,
+  // and emit SSE heartbeats on every delta so the connection stays alive.
+  let _lastHeartbeat = 0;
+  async function streamCollect(session: CopilotSession, prompt: string, timeoutMs: number): Promise<string> {
+    let content = '';
+    let deltaCount = 0;
+    const unsub = session.on("assistant.message_delta", (event: any) => {
+      content += event.data?.deltaContent ?? '';
+      deltaCount++;
+      if (deltaCount === 1) console.log("  [stream] First delta received");
+      if (deltaCount % 50 === 0) console.log(`  [stream] ${deltaCount} deltas, ${content.length} chars so far`);
+      // Throttled heartbeat — at most one every 500ms across all parallel streams
+      const now = Date.now();
+      if (now - _lastHeartbeat > 500) {
+        _lastHeartbeat = now;
+        try { res.write(`data: ${JSON.stringify({ phase: 'heartbeat' })}\n\n`); } catch {}
+      }
+    });
+    try {
+      const result = await session.sendAndWait({ prompt }, timeoutMs);
+      unsub();
+      console.log(`  [stream] Done: ${deltaCount} deltas total`);
+      // Prefer the final assembled content, fall back to streamed deltas
+      return result?.data?.content ?? content;
+    } catch (err) {
+      unsub();
+      console.log(`  [stream] Error after ${deltaCount} deltas, ${content.length} chars collected`);
+      // If we got partial content from deltas, return that instead of throwing
+      if (content.length > 200) return content;
+      throw err;
+    }
+  }
 
   try {
     // Clean up any previous architect session
     try { await client.deleteSession("blackwood-architect"); } catch {}
 
+    console.log("  Creating architect session...");
     const architect = await client.createSession({
       sessionId: "blackwood-architect",
       model: modelSettings.architect,
-      streaming: false,
+      streaming: true,
       tools: [],
       onPermissionRequest: approveAll,
       infiniteSessions: { enabled: false },
       systemMessage: { mode: "replace", content: "You are a creative mystery designer. Always respond with valid JSON only, no markdown, no explanations." },
     });
+    console.log("  Architect session created, sending skeleton prompt...");
 
     // ── Step 1: Generate skeleton ──
     sendEvent({ phase: 'thinking', agent: 'architect', status: "🏛️ Mystery Architect is designing the world from scratch..." });
     const skeletonPrompt = buildSkeletonPrompt(previousSettings);
-    const skeletonResult = await architect.sendAndWait({ prompt: skeletonPrompt }, 90_000);
-    const skeletonJson = extractJSON(skeletonResult?.data?.content ?? "");
+    const skeletonRaw = await streamCollect(architect, skeletonPrompt, 180_000);
+    console.log(`  Skeleton raw length: ${skeletonRaw.length} chars`);
+    let skeletonJson = extractJSON(skeletonRaw);
+    skeletonJson = repairTruncatedJSON(skeletonJson);
     const skeleton = JSON.parse(skeletonJson);
     console.log(`  Skeleton: "${skeleton.title}" — ${skeleton.characters.length} suspects, ${skeleton.evidence.length} evidence`);
 
@@ -1228,11 +1545,10 @@ app.post("/api/mystery/generate", async (_req, res) => {
       const char = skeleton.characters[i];
       sendEvent({ phase: 'thinking', agent: 'character_writer', status: `📝 Writing ${char.name}'s full backstory, secrets, and psychology (${i+1}/${skeleton.characters.length})...`, characterName: char.name, characterRole: char.role });
 
-      const charResult = await architect.sendAndWait({
-        prompt: buildCharacterPrompt(skeleton, char, skeleton.characters, skeleton.evidence)
-      }, 60_000);
-
-      const prompt = charResult?.data?.content ?? "";
+      const prompt = await streamCollect(architect,
+        buildCharacterPrompt(skeleton, char, skeleton.characters, skeleton.evidence),
+        180_000
+      );
       fullCharacters.push({
         ...char,
         systemPrompt: prompt,
@@ -1243,50 +1559,179 @@ app.post("/api/mystery/generate", async (_req, res) => {
 
     // ── Step 3: Generate Director prompt ──
     sendEvent({ phase: 'thinking', agent: 'director', status: "🎬 Director AI is writing the night orchestration playbook..." });
-    const dirResult = await architect.sendAndWait({
-      prompt: buildDirectorPromptRequest(skeleton)
-    }, 60_000);
-    const directorPrompt = dirResult?.data?.content ?? "";
+    const directorPrompt = await streamCollect(architect,
+      buildDirectorPromptRequest(skeleton),
+      180_000
+    );
     sendEvent({ phase: 'director_done', agent: 'director', status: "✅ Director playbook ready" });
 
-    // ── Step 4: Creative Agency — fresh session to avoid context pollution ──
-    sendEvent({ phase: 'thinking', agent: 'creative', status: "🎨 Creative Agency is designing the visual atmosphere and props..." });
+    // ── Step 4: Creative Agency — three parallel agents for environment + props + characters ──
+    sendEvent({ phase: 'thinking', agent: 'creative', status: "🎨 Creative Agency deploying 3 agents: Environment, Props Department, Character Art..." });
     let creativeAssets: CreativeAssets;
-    let creativeSession;
+    let envSession: any, propsSession: any, charSession: any;
+
+    const creativeInput = {
+      title: skeleton.title,
+      setting: skeleton.setting,
+      settingTheme: skeleton.settingTheme || 'noir',
+      rooms: skeleton.rooms.map((r: any) => ({ id: r.id, name: r.name || r.id })),
+      characters: skeleton.characters.map((c: any) => ({ id: c.id, name: c.name, role: c.role })),
+      evidence: skeleton.evidence.map((e: any) => ({ id: e.id, name: e.name, description: e.description || '' })),
+      crime: skeleton.crime || '',
+      weather: skeleton.visual?.weather,
+      visual: skeleton.visual,
+    };
+
     try {
-      try { await client.deleteSession("blackwood-creative"); } catch {}
-      creativeSession = await client.createSession({
-        sessionId: "blackwood-creative",
+      // Create three fresh sessions
+      try { await client.deleteSession("blackwood-creative-env"); } catch {}
+      try { await client.deleteSession("blackwood-creative-props"); } catch {}
+      try { await client.deleteSession("blackwood-creative-chars"); } catch {}
+
+      const sessionOpts = {
         model: modelSettings.architect,
-        streaming: false,
-        tools: [],
+        streaming: true,
+        tools: [] as any[],
         onPermissionRequest: approveAll,
         infiniteSessions: { enabled: false },
-        systemMessage: { mode: "replace", content: "You are a visual artist for a 2D pixel-art game. Output valid JSON only — no markdown, no explanations, no extra text." },
-      });
+        systemMessage: { mode: "replace" as const, content: "You are a visual artist for a 2D pixel-art game. Output valid minified JSON only — no markdown, no explanations, no extra text." },
+      };
 
-      const creativePrompt = buildCreativePrompt({
-        title: skeleton.title,
-        setting: skeleton.setting,
-        settingTheme: skeleton.settingTheme || 'noir',
-        rooms: skeleton.rooms.map((r: any) => ({ id: r.id, name: r.name || r.id })),
-        visual: skeleton.visual,
-      });
-      const creativeResult = await creativeSession.sendAndWait({ prompt: creativePrompt }, 90_000);
-      const rawContent = creativeResult?.data?.content ?? "";
-      console.log(`  Creative agent raw output length: ${rawContent.length} chars`);
-      const creativeJson = extractJSON(rawContent);
-      creativeAssets = JSON.parse(creativeJson) as CreativeAssets;
+      [envSession, propsSession, charSession] = await Promise.all([
+        client.createSession({ ...sessionOpts, sessionId: "blackwood-creative-env" }),
+        client.createSession({ ...sessionOpts, sessionId: "blackwood-creative-props" }),
+        client.createSession({ ...sessionOpts, sessionId: "blackwood-creative-chars" }),
+      ]);
+
+      const envPrompt = buildEnvironmentPrompt(creativeInput);
+      const propsPrompt = buildPropsPrompt(creativeInput);
+      const charPrompt = buildCharacterAssetsPrompt(creativeInput);
+
+      // Run all three in parallel — use allSettled so one failure doesn't discard the others
+      const results = await Promise.allSettled([
+        streamCollect(envSession, envPrompt, 180_000),
+        streamCollect(propsSession, propsPrompt, 180_000),
+        streamCollect(charSession, charPrompt, 180_000),
+      ]);
+
+      const envRaw = results[0].status === 'fulfilled' ? results[0].value : '';
+      const propsRaw = results[1].status === 'fulfilled' ? results[1].value : '';
+      const charRaw = results[2].status === 'fulfilled' ? results[2].value : '';
+
+      if (results[0].status === 'rejected') console.warn(`  Creative env agent failed:`, results[0].reason?.message);
+      if (results[1].status === 'rejected') console.warn(`  Creative props agent failed:`, results[1].reason?.message);
+      if (results[2].status === 'rejected') console.warn(`  Creative chars agent failed:`, results[2].reason?.message);
+
+      console.log(`  Creative output — env: ${envRaw.length} chars, props: ${propsRaw.length} chars, chars: ${charRaw.length} chars`);
+
+      // Parse and merge whichever succeeded
+      creativeAssets = {} as CreativeAssets;
+      for (const [label, raw] of [['env', envRaw], ['props', propsRaw], ['chars', charRaw]] as const) {
+        if (!raw) continue;
+        try {
+          const json = repairTruncatedJSON(extractJSON(raw));
+          const assets = JSON.parse(json);
+          Object.assign(creativeAssets, assets);
+        } catch (e: any) {
+          console.warn(`  Creative ${label} parse failed:`, e.message);
+        }
+      }
+
+      // ── Follow-up call for any missing sections ──
+      const missingEnv: string[] = [];
+      if (!creativeAssets.particles) missingEnv.push('particles');
+      if (!creativeAssets.weather?.particle?.draw?.length) missingEnv.push('weather');
+      if (!creativeAssets.roomAmbiance || Object.keys(creativeAssets.roomAmbiance).length === 0) missingEnv.push('roomAmbiance');
+      if (!creativeAssets.wallTile?.draw?.length) missingEnv.push('wallTile');
+
+      const missingProps: string[] = [];
+      if (!Array.isArray(creativeAssets.decorations) || creativeAssets.decorations.length === 0) missingProps.push('decorations');
+      if (!Array.isArray(creativeAssets.ambientProps) || creativeAssets.ambientProps.length === 0) missingProps.push('ambientProps');
+      if (!Array.isArray(creativeAssets.furniture) || creativeAssets.furniture.length === 0) missingProps.push('furniture');
+
+      const missingChar: string[] = [];
+      if (!Array.isArray(creativeAssets.npcCostumes) || creativeAssets.npcCostumes.length === 0) missingChar.push('npcCostumes');
+      if (!Array.isArray(creativeAssets.portraits) || creativeAssets.portraits.length === 0) missingChar.push('portraits');
+      if (!creativeAssets.crimeScene?.markers?.length) missingChar.push('crimeScene');
+
+      const totalMissing = missingEnv.length + missingProps.length + missingChar.length;
+      if (totalMissing > 0) {
+        console.log(`  Creative: missing sections — env: [${missingEnv.join(', ')}], props: [${missingProps.join(', ')}], chars: [${missingChar.join(', ')}]. Follow-up...`);
+        sendEvent({ phase: 'thinking', agent: 'creative', status: `🎨 Finishing ${totalMissing} remaining visual sections...` });
+
+        try {
+          const repairPrompts: Promise<string>[] = [];
+          const repairOrder: ('env' | 'props' | 'char')[] = [];
+          const roomList = skeleton.rooms.map((r: any) => `- ${r.id}: "${r.name || r.id}"`).join('\n');
+          const primHelp = 'You have 8 drawing primitives: fill, circle, line, tri, stroke, ellipse, arc, roundRect. All use {"op":"...","color":"#hex",...} with optional "alpha".';
+
+          if (missingEnv.length > 0) {
+            const schemas: Record<string, string> = {
+              wallTile: '"wallTile":{"draw":[...]}',
+              particles: '"particles":{"color":"#hex","size":2,"speed":{"min":3,"max":10},"alpha":{"start":0,"end":0.2},"frequency":400,"lifespan":6000,"blendMode":"ADD"}',
+              weather: '"weather":{"particle":{"width":4,"height":8,"draw":[...]},"config":{"speedX":{"min":-60,"max":-30},"speedY":{"min":280,"max":360},"alpha":{"start":0.5,"end":0.15},"frequency":18,"lifespan":1200,"blendMode":"ADD"}}',
+              roomAmbiance: '"roomAmbiance":{"room_id":{"tintColor":"#hex","tintAlpha":0.06}}',
+            };
+            const p = `You are a VISUAL ARTIST. Setting: "${skeleton.setting}" | Weather: ${skeleton.visual?.weather || 'clear'}\nROOMS:\n${roomList}\n${primHelp}\nGenerate ONLY these as minified JSON:\n{${missingEnv.map(s => schemas[s]).filter(Boolean).join(',')}}\nwallTile 32×32, 4-8 draw ops. roomAmbiance per room tintAlpha 0.03-0.12. Weather particle ≤16×16. Output ONLY JSON.`;
+            repairPrompts.push(streamCollect(envSession, p, 120_000));
+            repairOrder.push('env');
+          }
+
+          if (missingProps.length > 0) {
+            const schemas: Record<string, string> = {
+              decorations: '"decorations":[{"roomId":"id","items":[{"name":"N","width":32,"height":32,"draw":[...]}]}]',
+              furniture: '"furniture":[{"name":"N","width":48,"height":32,"draw":[...]}]',
+              ambientProps: '"ambientProps":[{"name":"N","width":12,"height":12,"count":4,"draw":[...]}]',
+            };
+            const p = `You are the PROPS DEPARTMENT. Setting: "${skeleton.setting}"\nROOMS:\n${roomList}\n${primHelp}\nGenerate ONLY these as minified JSON:\n{${missingProps.map(s => schemas[s]).filter(Boolean).join(',')}}\nDecorations 2-3 per room 24-48px 5-10 ops. Furniture 5-8 items 32-64px 6-12 ops. AmbientProps 3-5 types 8-16px. roomId MUST match. Output ONLY JSON.`;
+            repairPrompts.push(streamCollect(propsSession, p, 120_000));
+            repairOrder.push('props');
+          }
+
+          if (missingChar.length > 0) {
+            const charList = skeleton.characters.map((c: any) => `- ${c.id}: "${c.name}" (${c.role})`).join('\n');
+            const schemas: Record<string, string> = {
+              npcCostumes: '"npcCostumes":[{"characterId":"id","draw":[...]}]',
+              portraits: '"portraits":[{"characterId":"id","draw":[...]}]',
+              crimeScene: '"crimeScene":{"bodyOutline":{"draw":[...]},"markers":[{"name":"N","draw":[...]}],"barrier":{"draw":[...]}}',
+            };
+            const p = `You are a VISUAL ARTIST. Setting: "${skeleton.setting}" | Crime: ${skeleton.crime || ''}\nCHARACTERS:\n${charList}\n${primHelp}\nGenerate ONLY these as minified JSON:\n{${missingChar.map(s => schemas[s]).filter(Boolean).join(',')}}\nnpcCostumes overlay 32×32 body 2-5 ops. Portraits 64×64 6-15 ops. CrimeScene body 48×64. characterId MUST match. Output ONLY JSON.`;
+            repairPrompts.push(streamCollect(charSession, p, 120_000));
+            repairOrder.push('char');
+          }
+
+          const repairResults = await Promise.allSettled(repairPrompts);
+          for (let i = 0; i < repairResults.length; i++) {
+            const label = repairOrder[i];
+            const missingKeys = label === 'env' ? missingEnv : label === 'props' ? missingProps : missingChar;
+            if (repairResults[i].status === 'rejected') {
+              console.warn(`  Creative repair (${label}) failed:`, (repairResults[i] as PromiseRejectedResult).reason?.message);
+              continue;
+            }
+            try {
+              const repairJson = repairTruncatedJSON(extractJSON((repairResults[i] as PromiseFulfilledResult<string>).value));
+              const repairAssets = JSON.parse(repairJson);
+              for (const key of missingKeys) {
+                if ((repairAssets as any)[key]) {
+                  (creativeAssets as any)[key] = (repairAssets as any)[key];
+                }
+              }
+              console.log(`  Creative repair (${label}): recovered ${Object.keys(repairAssets).join(', ')}`);
+            } catch (e: any) {
+              console.warn(`  Creative repair (${label}) parse failed:`, e.message);
+            }
+          }
+        } catch (repairErr: any) {
+          console.warn(`  Creative follow-up failed:`, repairErr.message);
+        }
+      }
 
       // Validate and normalize roomIds to match actual skeleton room IDs.
-      // The AI often uses room names or display names instead of snake_case IDs — remap
-      // rather than drop so no creative work is silently lost.
       const roomIdList: string[] = skeleton.rooms.map((r: any) => r.id);
       const validRoomIdSet = new Set<string>(roomIdList);
       if (Array.isArray(creativeAssets.decorations)) {
         creativeAssets.decorations = creativeAssets.decorations.map((d: any, idx: number) => {
           if (validRoomIdSet.has(d.roomId)) return d;
-          // Try case-insensitive name / id matching before falling back positionally
           const nameMatch = skeleton.rooms.find((r: any) =>
             r.name?.toLowerCase() === d.roomId?.toLowerCase() ||
             r.id?.toLowerCase() === d.roomId?.toLowerCase() ||
@@ -1302,7 +1747,8 @@ app.post("/api/mystery/generate", async (_req, res) => {
         (d.items ?? []).map((item: any) => item.name).filter(Boolean)
       );
       const ambientPropNames = (creativeAssets.ambientProps ?? []).map((p: any) => p.name).filter(Boolean);
-      console.log(`  Creative agent: ${creativeAssets.decorations?.length ?? 0} room decoration groups, ${creativeAssets.ambientProps?.length ?? 0} ambient props`);
+      const furnitureNames = (creativeAssets.furniture ?? []).map((f: any) => f.name).filter(Boolean);
+      console.log(`  Creative agent: ${creativeAssets.decorations?.length ?? 0} decoration groups, ${creativeAssets.ambientProps?.length ?? 0} props, ${creativeAssets.furniture?.length ?? 0} furniture, ${creativeAssets.evidenceSprites?.length ?? 0} evidence, ${creativeAssets.npcCostumes?.length ?? 0} costumes, ${creativeAssets.portraits?.length ?? 0} portraits`);
       sendEvent({
         phase: 'creative_done', agent: 'creative',
         status: "✅ Visual atmosphere designed",
@@ -1310,19 +1756,30 @@ app.post("/api/mystery/generate", async (_req, res) => {
         decorationCount: creativeAssets.decorations?.length ?? 0,
         designedItems: designedItems.slice(0, 12),
         ambientPropNames,
+        furnitureNames,
         hasCustomWallTile: !!(creativeAssets.wallTile?.draw?.length),
+        evidenceSpriteCount: creativeAssets.evidenceSprites?.length ?? 0,
+        npcCostumeCount: creativeAssets.npcCostumes?.length ?? 0,
+        portraitCount: creativeAssets.portraits?.length ?? 0,
+        hasCustomWeather: !!(creativeAssets.weather?.particle?.draw?.length),
+        hasCrimeScene: !!(creativeAssets.crimeScene?.markers?.length),
       });
     } catch (err: any) {
       console.warn("  Creative agent failed, using defaults:", err.message);
       creativeAssets = getDefaultCreativeAssets(
-        skeleton.rooms.map((r: any) => ({ id: r.id, name: r.name || r.id }))
+        skeleton.rooms.map((r: any) => ({ id: r.id, name: r.name || r.id })),
+        skeleton.characters.map((c: any) => ({ id: c.id, name: c.name })),
+        skeleton.evidence.map((e: any) => ({ id: e.id, name: e.name }))
       );
       sendEvent({ phase: 'creative_done', agent: 'creative', status: "🎨 Visual atmosphere using defaults" });
     } finally {
-      if (creativeSession) {
-        try { await creativeSession.disconnect(); } catch {}
-        try { await client.deleteSession("blackwood-creative"); } catch {}
+      for (const s of [envSession, propsSession, charSession]) {
+        if (!s) continue;
+        try { await s.disconnect(); } catch {}
       }
+      try { await client.deleteSession("blackwood-creative-env"); } catch {}
+      try { await client.deleteSession("blackwood-creative-props"); } catch {}
+      try { await client.deleteSession("blackwood-creative-chars"); } catch {}
     }
 
     // ── Step 5: Compute room layout, positions, sentiments ──
@@ -1474,7 +1931,8 @@ app.post("/api/mystery/generate", async (_req, res) => {
 
     // Move 1-2 evidence items to upper floor when multi-floor is active
     if (multiFloor) {
-      const movableEvidence = skeleton.evidence.filter((ev: any) => !skeleton.keyEvidence.includes(ev.id));
+      const keyEv: string[] = Array.isArray(skeleton.keyEvidence) ? skeleton.keyEvidence : [];
+      const movableEvidence = skeleton.evidence.filter((ev: any) => !keyEv.includes(ev.id));
       const evToMove = movableEvidence.slice(-2);
       for (const ev of evToMove) {
         const currentRoom = rooms.find((r: any) => r.id === ev.location && (r.floorNum ?? 0) === 0);
@@ -1536,8 +1994,8 @@ app.post("/api/mystery/generate", async (_req, res) => {
     previousSettings.push(`${skeleton.title} (${skeleton.setting})`);
     savePreviousSettings();
 
-    // Clean up architect
-    await architect.disconnect();
+    // Clean up architect — don't let disconnect failures block generation
+    try { await architect.disconnect(); } catch {}
     try { await client.deleteSession("blackwood-architect"); } catch {}
 
     sendEvent({
@@ -1564,6 +2022,9 @@ app.post("/api/mystery/generate", async (_req, res) => {
     sendEvent({ phase: 'error', status: `❌ Generation failed: ${err.message}`, error: true });
     res.write("data: [DONE]\n\n");
     res.end();
+  } finally {
+    _generationComplete = true;
+    _generationInProgress = false;
   }
 });
 

@@ -222,26 +222,19 @@ export class GameAPI {
   }
 
   // ── Mystery generation ─────────────────────────────────────────
-  async *generateMystery() {
-    const res = await fetch(`${this.baseUrl}/api/mystery/generate`, { method: 'POST' });
-    if (!res.ok) throw new Error(`Generation failed (${res.status})`);
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith('data:')) continue;
-        const payload = trimmed.slice(5).trim();
-        if (payload === '[DONE]') return;
-        try { yield JSON.parse(payload); } catch { yield { status: payload }; }
-      }
-    }
+  /** Kick off mystery generation. Keeps SSE connection alive in background for heartbeats. */
+  async startGeneration() {
+    // Don't await or cancel — let the SSE stream run in background
+    // The heartbeat writes keep the server session healthy
+    fetch(`${this.baseUrl}/api/mystery/generate`, { method: 'POST' })
+      .catch(() => {}); // ignore — we poll for results
+  }
+
+  /** Poll for generation events starting from afterIdx. */
+  async pollGeneration(afterIdx = 0) {
+    const res = await fetch(`${this.baseUrl}/api/mystery/generate/status?after=${afterIdx}`);
+    if (!res.ok) throw new Error(`Poll failed (${res.status})`);
+    return res.json();
   }
 
   async getMystery() {

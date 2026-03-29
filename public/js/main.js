@@ -65,6 +65,7 @@ const config = {
 };
 
 const game = new Phaser.Game(config);
+window._phaserGame = game;  // Expose for dialog portraits
 
 // Register all scenes manually (none auto-start)
 game.scene.add('BootScene', BootScene);
@@ -161,8 +162,27 @@ document.querySelectorAll('.level-btn').forEach(btn => {
       };
 
       try {
-        for await (const update of api.generateMystery()) {
-          const phase = update.phase;
+        // Fire-and-forget: start generation on server
+        await api.startGeneration();
+
+        // Poll for events until complete
+        let nextIdx = 0;
+        const delay = (ms) => new Promise(r => setTimeout(r, ms));
+        let done = false;
+
+        while (!done) {
+          await delay(1000);
+          let data;
+          try {
+            data = await api.pollGeneration(nextIdx);
+          } catch { continue; } // retry on network blip
+
+          for (const update of data.events) {
+            nextIdx++;
+            const phase = update.phase;
+
+          // Ignore server keepalive heartbeats
+          if (phase === 'heartbeat') continue;
 
           if (phase === 'thinking') {
             // Mark the active step; also auto-complete the previous step
@@ -232,7 +252,22 @@ document.querySelectorAll('.level-btn').forEach(btn => {
             logEntry(update.status || 'Generation failed', 'entry-error');
             throw new Error(update.status);
           }
-        }
+          }  // end for (events)
+
+          // Check if generation is complete
+          if (data.complete) {
+            // Check if we got the 'complete' phase event
+            const gotComplete = data.events.some(e => e.phase === 'complete');
+            if (gotComplete) { done = true; break; }
+            // complete but no complete event = error happened, check for error
+            const gotError = data.events.some(e => e.phase === 'error' || e.error);
+            if (gotError) break; // error was already thrown above
+            done = true; break;
+          }
+          if (!data.inProgress && !data.complete && nextIdx > 0) {
+            done = true; break; // generation ended
+          }
+        }  // end while (!done)
 
         await api.selectLevel('random');
 
@@ -241,8 +276,35 @@ document.querySelectorAll('.level-btn').forEach(btn => {
         LEVEL_SUSPECTS.random = chars.map(c => ({ id: c.id, name: c.name }));
       } catch(err) {
         console.error('Mystery generation failed:', err);
-        overlay.classList.add('hidden');
-        levelSelect.classList.remove('hidden');
+        // Show error + retry in the overlay instead of hiding it
+        const errorBar = document.getElementById('gen-error-bar');
+        const errorMsg = document.getElementById('gen-error-msg');
+        if (errorBar && errorMsg) {
+          errorMsg.textContent = `Generation failed: ${err.message || 'Connection lost'}. You can retry.`;
+          errorBar.classList.remove('hidden');
+
+          // Retry button — re-click the same level button
+          document.getElementById('gen-retry-btn')?.addEventListener('click', () => {
+            errorBar.classList.add('hidden');
+            // Reset steps
+            ['architect','characters','director','creative','world'].forEach(id => {
+              const el = document.getElementById('gen-step-' + id);
+              if (el) { el.classList.remove('active','done'); el.querySelector('.gen-step-state').textContent = 'waiting'; }
+            });
+            const genLog = document.getElementById('gen-log');
+            if (genLog) genLog.innerHTML = '';
+            btn.click();
+          }, { once: true });
+
+          // Back button — return to level select
+          document.getElementById('gen-back-btn')?.addEventListener('click', () => {
+            overlay.classList.add('hidden');
+            levelSelect.classList.remove('hidden');
+          }, { once: true });
+        } else {
+          overlay.classList.add('hidden');
+          levelSelect.classList.remove('hidden');
+        }
         return;
       }
 
@@ -284,6 +346,37 @@ document.getElementById('hud-notebook').addEventListener('click', () => {
 document.getElementById('hud-accuse').addEventListener('click', () => {
   openAccusationModal();
 });
+
+// ── End Day popup (click clock to toggle) ───────────────────────
+{
+  const clockEl = document.getElementById('hud-clock');
+  const popup = document.getElementById('end-day-popup');
+  const endBtn = document.getElementById('end-day-btn');
+
+  clockEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    popup.classList.toggle('hidden');
+  });
+
+  // Close popup when clicking elsewhere
+  document.addEventListener('click', () => {
+    popup.classList.add('hidden');
+  });
+  popup.addEventListener('click', (e) => e.stopPropagation());
+
+  endBtn.addEventListener('click', () => {
+    popup.classList.add('hidden');
+    // Find the active manor scene and trigger night
+    const sceneKeys = ['ManorScene', 'CruiseManorScene', 'RandomManorScene'];
+    for (const key of sceneKeys) {
+      const s = game?.scene?.getScene(key);
+      if (s && s.scene.isActive() && !s.transitioning && !s.isNight) {
+        s._triggerNight();
+        break;
+      }
+    }
+  });
+}
 
 document.getElementById('btn-flashlight').addEventListener('click', () => {
   // Find the active manor-type scene and toggle its flashlight
@@ -476,12 +569,30 @@ submitBtn.addEventListener('click', async () => {
       resultEl.className = 'accusation-result correct';
       resultEl.textContent = result.message ?? 'Correct! Case solved.';
       window.dispatchEvent(new CustomEvent('correct-accusation'));
-      // Show win screen after a brief pause
-      setTimeout(() => {
-        accusationModal.classList.add('hidden');
-        window.setMusicMood?.('calm');
-        showEndScreen(true, result.message ?? 'You solved the mystery of Blackwood Manor!');
-      }, 2000);
+      // Hide the accusation form elements, keep the modal open
+      submitBtn.style.display = 'none';
+      cancelBtn.style.display = 'none';
+      suspectSelect.closest('label')?.nextElementSibling === suspectSelect
+        ? suspectSelect.style.display = 'none'
+        : null;
+      // Hide form inputs but keep the result message visible
+      for (const el of accusationModal.querySelectorAll('label, select, textarea, fieldset, .modal-actions, .attempts-info, h2')) {
+        el.style.display = 'none';
+      }
+      window.setMusicMood?.('calm');
+
+      // Start reconstruction inside the modal
+      const winMessage = result.message ?? 'You solved the mystery of Blackwood Manor!';
+      playReconstruction(api)
+        .catch(err => console.warn('Reconstruction skipped:', err.message))
+        .finally(() => {
+          accusationModal.classList.add('hidden');
+          // Reset hidden form elements for potential reuse
+          for (const el of accusationModal.querySelectorAll('[style*="display: none"]')) {
+            el.style.display = '';
+          }
+          showEndScreen(true, winMessage);
+        });
     } else {
       attemptsRemaining--;
       attemptsEl.textContent = `Attempts remaining: ${attemptsRemaining}`;
@@ -508,14 +619,9 @@ submitBtn.addEventListener('click', async () => {
 
 function showEndScreen(won, message) {
   if (won) {
-    // Play cinematic reconstruction first, then show the end screen
-    playReconstruction(api)
-      .catch(err => console.warn('Reconstruction skipped:', err.message))
-      .finally(() => {
-        endTitle.textContent = '🏆 Case Solved';
-        endMessage.textContent = message;
-        endScreen.classList.remove('hidden');
-      });
+    endTitle.textContent = '🏆 Case Solved';
+    endMessage.textContent = message;
+    endScreen.classList.remove('hidden');
   } else {
     endTitle.textContent = '💀 Case Closed';
     endMessage.textContent = message;

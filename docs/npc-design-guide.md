@@ -683,10 +683,16 @@ These relationships are dynamic — as evidence emerges and emotions shift, Hart
 
 | Component | Role | Authority | Input | Output |
 |-----------|------|-----------|-------|--------|
-| **NPCs (5)** | Interrogation targets | Within systemPrompt | Detective questions | Responses, clues, emotional shifts |
-| **Director** | World orchestrator | Full narrative control | Day's investigation progress | Night plans, evidence changes, NPC positions |
-| **GameState** | Central record | Witness tracking | Collections, accusations | Evidence lists, accusations, game outcome |
-| **Player** | Investigation driver | Limited (3 accusations) | Questions, evidence collection | Investigation progress, case solved/lost |
+| **NPCs (5+)** | Interrogation targets | Within systemPrompt | Detective questions + emotional context | Responses, clues, emotional shifts |
+| **Director** | World orchestrator + crime replay | Full narrative control | Day's investigation progress | Night plans, evidence changes, NPC positions, detective assessment |
+| **Profiler** | Detective psychologist | Behavioral analysis | Every 3rd question + current profile | Style/trait/confidence updates |
+| **Narrator** | Atmospheric prose | Omniscient observer | Game events | Noir narration + hints |
+| **Forensics** | Evidence analyst | Scientific examination | Evidence items | Detailed forensic analysis (streaming) |
+| **Red Herring** | Misleading NPC | Same as regular NPCs | Triggered mid-game | False theories, dramatic misdirection |
+| **Skeleton Key** | Mystery architect | On-demand generation | Theme/setting request | Full mystery skeleton + characters |
+| **Creative Agency** | Visual designer (3 agents) | Art direction | Setting + rooms + characters | DrawOp-based sprites, tiles, weather |
+| **GameState** | Central record | Witness tracking | Collections, accusations, sentiments | Evidence lists, accusations, game outcome |
+| **Player** | Investigation driver | Limited (3 accusations) | Questions, evidence, End Day | Investigation progress, case solved/lost |
 
 **Flow Each Day**:
 1. **Morning**: Player interrogates NPCs (1-5 times), collects evidence
@@ -909,3 +915,95 @@ In `gameState.ts`, set:
 - [ ] Initial sentiments set for all NPCs
 - [ ] Sprite generation for new characters and evidence
 - [ ] Night conversation pairs make sense for character relationships
+
+---
+
+## **19. DYNAMIC EMOTIONAL SYSTEM**
+
+### **Server-Side Emotion Nudging** (`server.ts` — `nudgeEmotion()`)
+After every interrogation, the server analyzes both the player's message and the NPC's response for emotional cues and applies small sentiment shifts automatically:
+
+- **Aggressive player tone** (liar, confess, guilty) → NPC trust drops, state shifts to defensive/scared/hostile
+- **Sympathetic player tone** (understand, sorry, trust me) → NPC trust rises, state de-escalates
+- **Evidence references** → calm NPCs become nervous
+- **NPC response cues** (trembling, how dare, I'll tell you) → state adjusts to match emotional language
+
+### **Emotional Context Injection**
+Every interrogation message is enriched server-side with:
+```
+[EMOTIONAL CONTEXT — your current feelings: {sentiment description}]
+[This is question #{N} from the detective...]
+```
+This ensures NPCs always know their emotional state without needing to call `get_my_sentiment`.
+
+### **Evidence Presentation Emotions**
+Showing evidence via `POST /api/evidence/:id/show/:characterId` auto-nudges emotions:
+- Calm → nervous
+- Nervous/defensive → scared or more defensive
+- All: trust drops by 1
+
+### **Visual Feedback** (`public/js/npcEmotions.js`)
+Polls `/api/sentiments` every 8s and updates per-NPC:
+- **Floating emoji** above name (😐😰😠😨🛡️🤝😤😱) — pulses on change
+- **Sprite tint** — subtle color (red=angry, blue=scared, green=cooperative, purple=desperate)
+- **Breathing speed** — scared/desperate breathe 2x faster, calm/cooperative normal
+
+---
+
+## **20. CREATIVE AGENCY** (`src/creative-agent.ts`)
+
+Three parallel AI agents that design visual assets for procedurally generated worlds:
+
+| Agent | Session | Focus | Output |
+|-------|---------|-------|--------|
+| Environment | blackwood-creative-env | wallTile, particles, roomAmbiance, weather | Atmosphere |
+| Props Department | blackwood-creative-props | decorations, furniture, ambientProps | Immersive objects |
+| Character Art | blackwood-creative-chars | evidenceSprites, npcCostumes, portraits, crimeScene | Character visuals |
+
+### **Drawing DSL**
+8 primitives: `fill`, `circle`, `line`, `tri`, `stroke`, `ellipse`, `arc`, `roundRect`
+All use `{"op":"...","color":"#hex",...}` with optional `"alpha"`.
+
+### **Resilience**
+- `Promise.allSettled` — one agent failure doesn't discard others
+- Follow-up repair calls target only missing sections
+- Falls back to `getDefaultCreativeAssets()` if all agents fail
+
+---
+
+## **21. CRIME REPLAY SYSTEM** (`public/js/reconstruction.js`)
+
+After a correct accusation, the modal transforms in-place into a chapter-based crime replay:
+
+1. Green "Case solved!" message stays visible
+2. Form elements hidden, loading spinner shows ("Generating crime replay…")
+3. Director generates 5-7 noir reconstruction paragraphs + detective assessment
+4. Player steps through chapters with **Next** button
+5. Final chapter: **🕵️ Detective Assessment** — personalized analysis of the player's style, thoroughness, and approach
+6. "Continue" → end screen
+
+The Director receives full player performance data (interrogation style, traits, evidence collected, days taken, contradictions found, NPC gossip).
+
+---
+
+## **22. DIRECTOR RESILIENCE**
+
+### **`directorSendAndWait()`**
+All Director calls go through this centralized wrapper:
+- 2-attempt retry loop
+- Auto-detects "Session not found" (stale session)
+- Aborts, disconnects, nulls, and recreates on failure
+
+### **Night Fallback**
+If Director fails completely during `planNight()`:
+- Fallback conversation pairs generated from active characters (random pairing, generic prompts)
+- `setDirectorPlan()` called with fallback data so night conversations always execute
+
+---
+
+## **23. END DAY BUTTON**
+
+Players can skip to nightfall by clicking the clock in the HUD bar. A popup appears with:
+- "🌙 Skip to nightfall?" label
+- "End Day" button that calls `_triggerNight()` on the active scene
+- Disabled during night or ongoing transitions

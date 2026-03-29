@@ -117,7 +117,7 @@ body {
 }
 
 .portrait-frame {
-  width: 56px; height: 56px;
+  width: 64px; height: 64px;
   border: 2px solid var(--gold);
   border-radius: 4px;
   overflow: hidden;
@@ -128,6 +128,7 @@ body {
   width: 100%; height: 100%;
   background-size: cover;
   background-position: center;
+  image-rendering: pixelated;
 }
 
 .character-name {
@@ -506,6 +507,53 @@ body {
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* ── Accusation → Crime Replay (in-modal) ── */
+.accusation-replay {
+  margin-top: 20px;
+  animation: reconFadeIn 0.6s ease-out forwards;
+}
+.replay-chapter-title {
+  font-family: var(--font-heading);
+  color: var(--gold);
+  font-size: 1.15rem;
+  margin-bottom: 12px;
+}
+.replay-chapter-text {
+  font-family: var(--font-body);
+  color: var(--cream);
+  font-size: 0.95rem;
+  line-height: 1.7;
+  min-height: 60px;
+  white-space: pre-wrap;
+}
+.replay-progress {
+  margin-top: 14px;
+  color: rgba(232,220,200,0.4);
+  font-size: 0.8rem;
+}
+.replay-next-btn {
+  margin-top: 16px;
+}
+.replay-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: rgba(232,220,200,0.7);
+  font-size: 0.95rem;
+  margin-top: 16px;
+}
+.replay-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(201,168,76,0.3);
+  border-top-color: var(--gold);
+  border-radius: 50%;
+  animation: replaySpin 0.8s linear infinite;
+}
+@keyframes replaySpin {
+  to { transform: rotate(360deg); }
+}
+
 /* ══════════════════════════
    NIGHT CONVERSATION OVERLAY
    ══════════════════════════ */
@@ -641,6 +689,36 @@ body {
   background: var(--gold);
   border-radius: 2px;
   transition: width 1s linear;
+}
+.hud-clock { cursor: pointer; position: relative; }
+
+/* End Day popup */
+.end-day-popup {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 8px;
+  background: var(--panel-bg);
+  border: 1px solid var(--gold);
+  border-radius: 6px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 100;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+  animation: fadeIn 0.2s ease-out;
+  white-space: nowrap;
+}
+.end-day-popup.hidden { display: none; }
+.end-day-label {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  color: var(--cream);
+}
+.end-day-btn {
+  font-size: 0.8rem;
+  padding: 4px 12px;
 }
 
 /* Detective profile indicator */

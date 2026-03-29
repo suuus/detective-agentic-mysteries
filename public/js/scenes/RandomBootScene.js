@@ -53,21 +53,34 @@ export default class RandomBootScene extends Phaser.Scene {
     for (const op of ops) {
       if (!op || !op.op) continue;
       const c = this._hex(op.color);
+      const a = typeof op.alpha === 'number' ? op.alpha : 1;
       switch (op.op) {
         case 'fill':
-          g.fillStyle(c); g.fillRect(op.x, op.y, op.w, op.h);
+          g.fillStyle(c, a); g.fillRect(op.x, op.y, op.w, op.h);
           break;
         case 'circle':
-          g.fillStyle(c); g.fillCircle(op.x, op.y, op.r);
+          g.fillStyle(c, a); g.fillCircle(op.x, op.y, op.r);
           break;
         case 'line':
-          g.lineStyle(op.width || 1, c); g.lineBetween(op.x1, op.y1, op.x2, op.y2);
+          g.lineStyle(op.width || 1, c, a); g.lineBetween(op.x1, op.y1, op.x2, op.y2);
           break;
         case 'tri':
-          g.fillStyle(c); g.fillTriangle(op.x1, op.y1, op.x2, op.y2, op.x3, op.y3);
+          g.fillStyle(c, a); g.fillTriangle(op.x1, op.y1, op.x2, op.y2, op.x3, op.y3);
           break;
         case 'stroke':
-          g.lineStyle(op.width || 1, c); g.strokeRect(op.x, op.y, op.w, op.h);
+          g.lineStyle(op.width || 1, c, a); g.strokeRect(op.x, op.y, op.w, op.h);
+          break;
+        case 'ellipse':
+          g.fillStyle(c, a); g.fillEllipse(op.x, op.y, op.w, op.h);
+          break;
+        case 'arc':
+          g.lineStyle(op.width || 1, c, a);
+          g.beginPath();
+          g.arc(op.x, op.y, op.r, op.start || 0, op.end || Math.PI * 2, false);
+          g.strokePath();
+          break;
+        case 'roundRect':
+          g.fillStyle(c, a); g.fillRoundedRect(op.x, op.y, op.w, op.h, op.r || 4);
           break;
       }
     }
@@ -152,6 +165,7 @@ export default class RandomBootScene extends Phaser.Scene {
     };
     const p = palettes[style] || palettes.wooden;
 
+    // Default palette-based furniture (always available as fallback)
     this._tex('furn_table', 48, 32, g => { g.fillStyle(p.pri); g.fillRect(4,4,40,24); g.fillStyle(p.sec); g.fillRect(6,6,36,20); });
     this._tex('furn_desk', 64, 32, g => { g.fillStyle(p.pri); g.fillRect(0,4,64,24); g.fillStyle(p.acc); g.fillRect(2,8,60,18); });
     this._tex('furn_bookshelf', 64, 32, g => {
@@ -159,14 +173,35 @@ export default class RandomBootScene extends Phaser.Scene {
       const c=[0x8B0000,0x00008B,0x006400,0x4B0082]; for(let i=0;i<8;i++){ g.fillStyle(c[i%4]); g.fillRect(4+i*7,4,6,12); g.fillRect(4+i*7,18,6,12); }
     });
     this._tex('furn_plant', 24, 32, g => { g.fillStyle(p.pri); g.fillRect(4,16,16,14); g.fillStyle(0x228B22); g.fillRect(8,2,3,14); g.fillRect(4,0,6,6); g.fillRect(12,2,6,6); });
-    // Extra furniture
     this._tex('furn_crate', 32, 32, g => { g.fillStyle(p.pri); g.fillRect(2,2,28,28); g.lineStyle(2,p.acc); g.strokeRect(4,4,24,24); g.beginPath(); g.moveTo(4,4); g.lineTo(28,28); g.strokePath(); });
     this._tex('furn_cabinet', 48, 32, g => { g.fillStyle(p.pri); g.fillRect(2,0,44,32); g.fillStyle(p.sec); g.fillRect(4,2,18,28); g.fillRect(26,2,18,28); g.fillStyle(p.acc); g.fillCircle(20,16,2); g.fillCircle(28,16,2); });
+
+    // AI-designed setting-specific furniture
+    const ca = window._generatedWorld?.creativeAssets;
+    if (Array.isArray(ca?.furniture)) {
+      ca.furniture.forEach((furn, i) => {
+        if (!furn?.draw?.length) return;
+        const w = Math.min(Math.max(furn.width || 48, 16), 64);
+        const h = Math.min(Math.max(furn.height || 32, 16), 64);
+        const key = `furn_custom_${i}`;
+        furn._texKey = key;
+        this._tex(key, w, h, g => this._execDraw(g, furn.draw));
+      });
+      console.log(`[Creative] Generated ${ca.furniture.length} custom furniture textures`);
+    }
   }
 
   _genNPCs() {
     const world = window._generatedWorld;
     if (!world) return;
+    const ca = world.creativeAssets;
+    // Build costume lookup by characterId
+    const costumeLookup = {};
+    if (Array.isArray(ca?.npcCostumes)) {
+      for (const c of ca.npcCostumes) {
+        if (c?.characterId && Array.isArray(c.draw)) costumeLookup[c.characterId] = c.draw;
+      }
+    }
     // Fallback palette if AI didn't provide spriteColors
     const fallback = [
       { body: 0x8B2252, hair: 0xDAA520 }, { body: 0x2F4F4F, hair: 0x696969 },
@@ -177,13 +212,17 @@ export default class RandomBootScene extends Phaser.Scene {
     world.characters.forEach((char, i) => {
       const bodyCol = char.spriteColors ? this._hex(char.spriteColors.body) : fallback[i % fallback.length].body;
       const hairCol = char.spriteColors ? this._hex(char.spriteColors.hair) : fallback[i % fallback.length].hair;
+      const costume = costumeLookup[char.id];
       this._tex('npc_' + char.id, 32, 32, g => {
         const cx=16, cy=16;
+        // Base body
         g.fillStyle(bodyCol); g.fillRect(cx-6,cy-2,12,14);
         g.fillStyle(0xe8c99b); g.fillRect(cx-5,cy-10,10,9);
         g.fillStyle(hairCol); g.fillRect(cx-5,cy-13,10,5);
         g.fillStyle(0x222222); g.fillRect(cx-3,cy-6,2,2); g.fillRect(cx+1,cy-6,2,2);
         g.fillStyle(0x2a2a2a); g.fillRect(cx-4,cy+12,3,4); g.fillRect(cx+1,cy+12,3,4);
+        // AI costume overlay
+        if (costume) this._execDraw(g, costume);
       });
     });
   }
@@ -192,16 +231,32 @@ export default class RandomBootScene extends Phaser.Scene {
     const world = window._generatedWorld;
     if (!world) return;
     const accent = this._hex(world.visual?.accentColor || '#c9a84c');
+    const ca = world.creativeAssets;
+
+    // Build sprite lookup by evidenceId
+    const spriteLookup = {};
+    if (Array.isArray(ca?.evidenceSprites)) {
+      for (const es of ca.evidenceSprites) {
+        if (es?.evidenceId && Array.isArray(es.draw) && es.draw.length) spriteLookup[es.evidenceId] = es;
+      }
+    }
 
     world.evidence.forEach((ev) => {
-      const col = ev.color ? this._hex(ev.color) : 0xf5f0e0;
-      // Each evidence item gets a unique color from the AI
-      this._tex('ev_' + ev.id, 16, 16, g => {
-        g.fillStyle(col); g.fillRect(3,2,10,12);
-        g.fillStyle(col, 0.6); g.fillRect(5,4,6,3);
-        // Small detail mark
-        g.fillStyle(0x333333); g.fillRect(5,9,5,1); g.fillRect(5,11,4,1);
-      });
+      const aiSprite = spriteLookup[ev.id];
+      if (aiSprite) {
+        // Use AI-designed unique sprite
+        const w = Math.min(Math.max(aiSprite.width || 16, 8), 24);
+        const h = Math.min(Math.max(aiSprite.height || 16, 8), 24);
+        this._tex('ev_' + ev.id, w, h, g => this._execDraw(g, aiSprite.draw));
+      } else {
+        // Fallback: generic colored evidence
+        const col = ev.color ? this._hex(ev.color) : 0xf5f0e0;
+        this._tex('ev_' + ev.id, 16, 16, g => {
+          g.fillStyle(col); g.fillRect(3,2,10,12);
+          g.fillStyle(col, 0.6); g.fillRect(5,4,6,3);
+          g.fillStyle(0x333333); g.fillRect(5,9,5,1); g.fillRect(5,11,4,1);
+        });
+      }
     });
     // Glow uses accent color
     this._tex('ev_glow', 24, 24, g => { g.fillStyle(accent, 0.4); g.fillCircle(12, 12, 10); });
@@ -213,51 +268,70 @@ export default class RandomBootScene extends Phaser.Scene {
   }
 
   _genCrimeScene() {
-    this._tex('crime_body_outline', 48, 64, g => {
-      g.lineStyle(2, 0xcccccc, 0.8);
-      g.strokeCircle(24, 8, 6);
-      g.lineBetween(24, 14, 24, 18);
-      g.strokeRect(14, 18, 20, 20);
-      g.lineBetween(14, 20, 4, 32);
-      g.lineBetween(4, 32, 2, 38);
-      g.lineBetween(34, 20, 44, 32);
-      g.lineBetween(44, 32, 46, 38);
-      g.lineBetween(18, 38, 12, 52);
-      g.lineBetween(12, 52, 8, 62);
-      g.lineBetween(30, 38, 36, 52);
-      g.lineBetween(36, 52, 40, 62);
-      g.fillStyle(0xaaaaaa, 0.15);
-      g.fillCircle(24, 30, 18);
-    });
+    const ca = window._generatedWorld?.creativeAssets?.crimeScene;
 
-    this._tex('crime_blood_1', 16, 16, g => {
-      g.fillStyle(0x4a0000, 0.7);
-      g.fillCircle(8, 8, 5);
-      g.fillStyle(0x3a0000, 0.5);
-      g.fillCircle(5, 6, 3);
-      g.fillCircle(11, 10, 2);
-      g.fillRect(3, 8, 3, 2);
-    });
+    // Body outline — AI-designed or default chalk outline (48×64)
+    if (ca?.bodyOutline?.draw?.length) {
+      this._tex('crime_body_outline', 48, 64, g => this._execDraw(g, ca.bodyOutline.draw));
+    } else {
+      this._tex('crime_body_outline', 48, 64, g => {
+        g.lineStyle(2, 0xcccccc, 0.8);
+        g.strokeCircle(24, 8, 6);
+        g.lineBetween(24, 14, 24, 18);
+        g.strokeRect(14, 18, 20, 20);
+        g.lineBetween(14, 20, 4, 32); g.lineBetween(4, 32, 2, 38);
+        g.lineBetween(34, 20, 44, 32); g.lineBetween(44, 32, 46, 38);
+        g.lineBetween(18, 38, 12, 52); g.lineBetween(12, 52, 8, 62);
+        g.lineBetween(30, 38, 36, 52); g.lineBetween(36, 52, 40, 62);
+        g.fillStyle(0xaaaaaa, 0.15); g.fillCircle(24, 30, 18);
+      });
+    }
 
-    this._tex('crime_blood_2', 24, 24, g => {
-      g.fillStyle(0x3a0000, 0.6);
-      g.fillCircle(12, 12, 10);
-      g.fillStyle(0x4a0000, 0.5);
-      g.fillCircle(12, 12, 7);
-      g.fillStyle(0x2a0000, 0.4);
-      g.fillCircle(10, 14, 4);
-      g.fillCircle(16, 10, 3);
-    });
-
-    this._tex('crime_tape', 64, 8, g => {
-      g.fillStyle(0xccaa00); g.fillRect(0, 0, 64, 8);
-      g.fillStyle(0x111111);
-      for (let i = 0; i < 8; i++) {
-        const x = i * 8;
-        g.fillTriangle(x, 0, x+4, 4, x+8, 0);
-        g.fillTriangle(x, 8, x+4, 4, x+8, 8);
+    // Scene markers — AI-designed or default blood pools (16×16 each)
+    if (Array.isArray(ca?.markers) && ca.markers.length > 0) {
+      ca.markers.forEach((marker, i) => {
+        if (!marker?.draw?.length) return;
+        this._tex(`crime_marker_${i}`, 16, 16, g => this._execDraw(g, marker.draw));
+      });
+      // Also create the classic keys as aliases to first markers for scene compat
+      if (!this.textures.exists('crime_blood_1') && ca.markers[0]?.draw?.length) {
+        this._tex('crime_blood_1', 16, 16, g => this._execDraw(g, ca.markers[0].draw));
       }
-    });
+      if (!this.textures.exists('crime_blood_2') && ca.markers.length > 1 && ca.markers[1]?.draw?.length) {
+        this._tex('crime_blood_2', 24, 24, g => this._execDraw(g, ca.markers[1].draw));
+      } else if (!this.textures.exists('crime_blood_2')) {
+        this._tex('crime_blood_2', 24, 24, g => {
+          g.fillStyle(0x3a0000, 0.6); g.fillCircle(12, 12, 10);
+          g.fillStyle(0x4a0000, 0.5); g.fillCircle(12, 12, 7);
+        });
+      }
+    } else {
+      this._tex('crime_blood_1', 16, 16, g => {
+        g.fillStyle(0x4a0000, 0.7); g.fillCircle(8, 8, 5);
+        g.fillStyle(0x3a0000, 0.5); g.fillCircle(5, 6, 3); g.fillCircle(11, 10, 2);
+        g.fillRect(3, 8, 3, 2);
+      });
+      this._tex('crime_blood_2', 24, 24, g => {
+        g.fillStyle(0x3a0000, 0.6); g.fillCircle(12, 12, 10);
+        g.fillStyle(0x4a0000, 0.5); g.fillCircle(12, 12, 7);
+        g.fillStyle(0x2a0000, 0.4); g.fillCircle(10, 14, 4); g.fillCircle(16, 10, 3);
+      });
+    }
+
+    // Barrier — AI-designed or default crime tape (64×8)
+    if (ca?.barrier?.draw?.length) {
+      this._tex('crime_tape', 64, 8, g => this._execDraw(g, ca.barrier.draw));
+    } else {
+      this._tex('crime_tape', 64, 8, g => {
+        g.fillStyle(0xccaa00); g.fillRect(0, 0, 64, 8);
+        g.fillStyle(0x111111);
+        for (let i = 0; i < 8; i++) {
+          const x = i * 8;
+          g.fillTriangle(x, 0, x+4, 4, x+8, 0);
+          g.fillTriangle(x, 8, x+4, 4, x+8, 8);
+        }
+      });
+    }
   }
 
   _genStairs() {
@@ -346,6 +420,25 @@ export default class RandomBootScene extends Phaser.Scene {
       this._tex('creative_particle', pSize * 2, pSize * 2, g => {
         g.fillStyle(pColor); g.fillCircle(pSize, pSize, pSize);
       });
+    }
+
+    // Generate character portrait textures (64×64) for dialog panel
+    if (Array.isArray(ca.portraits)) {
+      for (const portrait of ca.portraits) {
+        if (!portrait?.characterId || !Array.isArray(portrait.draw) || !portrait.draw.length) continue;
+        const key = `portrait_${portrait.characterId}`;
+        this._tex(key, 64, 64, g => this._execDraw(g, portrait.draw));
+      }
+      console.log(`[Creative] Generated ${ca.portraits.length} character portraits`);
+    }
+
+    // Generate custom weather particle texture
+    if (ca.weather?.particle?.draw?.length) {
+      const wp = ca.weather.particle;
+      const w = Math.min(Math.max(wp.width || 4, 1), 16);
+      const h = Math.min(Math.max(wp.height || 4, 1), 16);
+      this._tex('weather_creative', w, h, g => this._execDraw(g, wp.draw));
+      console.log(`[Creative] Generated custom weather particle texture (${w}×${h})`);
     }
 
     console.log(`[Creative] Generated ${decoIdx} decoration textures, ${ca.ambientProps?.length || 0} prop textures`);

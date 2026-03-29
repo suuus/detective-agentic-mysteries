@@ -54,7 +54,23 @@ export class DialogManager {
     this.currentCharacter = characterId;
     this.currentCharacterName = characterName;
     this.nameEl.textContent = characterName;
-    this.portrait.style.backgroundImage = `url('assets/portraits/${characterId}.png')`;
+
+    // Use AI-generated portrait texture if available, fall back to NPC sprite, then placeholder
+    const portraitKey = `portrait_${characterId}`;
+    const npcKey = `npc_${characterId}`;
+    const game = window._phaserGame;
+    if (game?.textures?.exists(portraitKey)) {
+      const dataUrl = game.textures.getBase64(portraitKey);
+      this.portrait.style.backgroundImage = `url('${dataUrl}')`;
+      this.portrait.style.imageRendering = 'pixelated';
+    } else if (game?.textures?.exists(npcKey)) {
+      const dataUrl = game.textures.getBase64(npcKey);
+      this.portrait.style.backgroundImage = `url('${dataUrl}')`;
+      this.portrait.style.imageRendering = 'pixelated';
+    } else {
+      this.portrait.style.backgroundImage = `url('assets/portraits/${characterId}.png')`;
+      this.portrait.style.imageRendering = '';
+    }
 
     // Render previous messages for this character
     this._renderHistory();

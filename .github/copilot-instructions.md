@@ -38,6 +38,9 @@ NPC sessions can get stuck or crash. The system handles this via:
 - `activeRequests` Map — tracks every in-flight `sendAndWait` with timestamps
 - 30-second healthcheck interval detects sessions stuck >50s, aborts and recreates them
 - `sendAndCollect()` (night conversations) also tracks and auto-recovers
+- `directorSendAndWait()` — centralized Director wrapper with auto-retry on stale sessions
+- Night fallback — if Director fails, fallback conversation pairs are auto-generated from active characters
+- Creative Agency — `Promise.allSettled` + follow-up repair calls for missing visual sections
 
 ## Building a New Level
 
@@ -51,6 +54,10 @@ See `docs/npc-design-guide.md` section 16 "How to Build a New Level" for the ful
 - Don't use spritesheet approach for player — individual frame textures (`player_down_0`, `player_left_1`, etc.) are more reliable
 - NPC system prompts must include all 12 game rules (see `docs/npc-design-guide.md` section 2)
 - Evidence IDs must match between `gameState.ts` (definitions), `BootScene.js` (sprites as `ev_{id}`), and `ManorScene.js` (placement)
+- Don't use `Promise.all` for parallel creative agents — use `Promise.allSettled` so one failure doesn't discard the rest
+- Director calls must use `directorSendAndWait()` — never call `getDirectorSession().sendAndWait()` directly
+- NPC interrogation messages get emotional context injected server-side — don't duplicate in frontend
+- Showing evidence via `/api/evidence/:id/show/:characterId` auto-nudges NPC emotions — no extra call needed
 
 ## Versioning & Changelog
 

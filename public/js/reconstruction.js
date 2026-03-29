@@ -1,40 +1,48 @@
 /**
- * Crime Reconstruction — cinematic narration overlay after a win.
- * Fetches AI-generated reconstruction from the Director, then plays
- * each paragraph with typewriter text, background fades, and TTS.
+ * Crime Reconstruction — chapter-based replay inside the accusation modal.
+ * After a correct accusation, the modal transforms to show AI-generated
+ * reconstruction chapters one at a time with "Next" navigation.
  */
 
 const CHAR_DELAY = 15;         // ms per character in typewriter
-const PAUSE_BETWEEN = 1000;    // ms pause ("...") between paragraphs
 const TTS_MAX_WAIT = 8000;     // max ms to wait for TTS to finish
-const BG_COLORS = [
-  'rgba(0,0,0,0.97)',
-  'rgba(40,8,8,0.97)',
-  'rgba(0,0,0,0.97)',
-  'rgba(25,5,15,0.97)',
-  'rgba(0,0,0,0.97)',
-  'rgba(40,8,8,0.97)',
-  'rgba(0,0,0,0.97)',
-];
 
 /**
- * Play the full reconstruction sequence.
- * Resolves when the player clicks "Continue" at the end.
- * Rejects (gracefully) if the API call fails.
+ * Play reconstruction inside the accusation modal.
+ * Shows a loading state, fetches AI narration, then lets the player
+ * step through chapters with a "Next" button.
+ * Resolves when the player finishes the last chapter.
  * @param {import('./api.js').GameAPI} api
  * @returns {Promise<void>}
  */
 export async function playReconstruction(api) {
-  const overlay  = document.getElementById('reconstruction-overlay');
-  const titleEl  = document.getElementById('reconstruction-title');
-  const textEl   = document.getElementById('reconstruction-text');
-  const progEl   = document.getElementById('reconstruction-progress');
+  const replayEl    = document.getElementById('accusation-replay');
+  const titleEl     = document.getElementById('replay-chapter-title');
+  const textEl      = document.getElementById('replay-chapter-text');
+  const progressEl  = document.getElementById('replay-progress');
+  const nextBtn     = document.getElementById('replay-next');
 
-  if (!overlay || !textEl) throw new Error('Reconstruction DOM missing');
+  if (!replayEl || !textEl) throw new Error('Reconstruction DOM missing');
+
+  // Show replay section with loading state
+  replayEl.classList.remove('hidden');
+  titleEl.textContent = '🔍 Crime Reconstruction';
+  textEl.innerHTML = '';
+  progressEl.textContent = '';
+  nextBtn.classList.add('hidden');
+
+  // Loading indicator
+  const loadingEl = document.createElement('div');
+  loadingEl.className = 'replay-loading';
+  loadingEl.innerHTML = '<div class="replay-spinner"></div><span>Generating crime replay…</span>';
+  replayEl.appendChild(loadingEl);
 
   // Fetch AI narration
   const { reconstruction } = await api.reconstruct();
   if (!reconstruction) throw new Error('Empty reconstruction');
+
+  // Remove loading indicator
+  loadingEl.remove();
 
   // Split into paragraphs (skip blanks)
   const paragraphs = reconstruction
@@ -44,84 +52,50 @@ export async function playReconstruction(api) {
 
   if (paragraphs.length === 0) throw new Error('No paragraphs');
 
-  // Show overlay
-  overlay.classList.remove('hidden');
+  // Step through chapters one at a time
+  for (let i = 0; i < paragraphs.length; i++) {
+    const isLast = i === paragraphs.length - 1;
 
-  // State for skip-click handling
-  let skipRequested = false;
-  let resolveSkip = null;
+    titleEl.textContent = isLast
+      ? '🕵️ Detective Assessment'
+      : `Chapter ${i + 1}`;
+    progressEl.textContent = `${i + 1} / ${paragraphs.length}`;
 
-  const onSkipClick = () => { skipRequested = true; resolveSkip?.(); };
-  textEl.addEventListener('click', onSkipClick);
-  overlay.addEventListener('click', onSkipClick);
+    // Typewriter effect
+    await typewrite(textEl, paragraphs[i]);
 
-  try {
-    for (let i = 0; i < paragraphs.length; i++) {
-      const para = paragraphs[i];
-
-      // Background color transition
-      overlay.style.background = BG_COLORS[i % BG_COLORS.length];
-
-      // Progress indicator
-      progEl.textContent = `${i + 1} / ${paragraphs.length}`;
-
-      // Typewriter effect (cancelable)
-      skipRequested = false;
-      await typewrite(textEl, para, () => skipRequested);
-
-      // TTS narration
-      if (window.speakNarration) {
-        window.speakNarration(para);
-        await waitForTTS();
-      }
-
-      // Pause between paragraphs
-      if (i < paragraphs.length - 1) {
-        textEl.textContent += '\n\n...';
-        await delay(PAUSE_BETWEEN);
-      }
+    // TTS narration
+    if (window.speakNarration) {
+      window.speakNarration(paragraphs[i]);
+      await waitForTTS();
     }
-  } finally {
-    textEl.removeEventListener('click', onSkipClick);
-    overlay.removeEventListener('click', onSkipClick);
+
+    // Show navigation button and wait for click
+    nextBtn.textContent = isLast ? 'Continue' : 'Next';
+    nextBtn.classList.remove('hidden');
+    await new Promise(resolve => {
+      nextBtn.addEventListener('click', resolve, { once: true });
+    });
+    nextBtn.classList.add('hidden');
   }
 
-  // Finale: "Case Closed" title + continue button
-  overlay.style.background = 'rgba(0,0,0,0.97)';
-  titleEl.textContent = '⚖️ Case Closed';
-  titleEl.style.animation = 'none';
-  void titleEl.offsetHeight;          // reflow to restart animation
-  titleEl.style.animation = 'reconFadeIn 1s ease-out forwards';
-  textEl.style.cursor = 'default';
-  progEl.textContent = '';
-
-  const btn = document.createElement('button');
-  btn.className = 'gold-btn';
-  btn.textContent = 'Continue';
-  btn.style.marginTop = '24px';
-
-  const contentEl = document.getElementById('reconstruction-content');
-  contentEl.appendChild(btn);
-
-  await new Promise(resolve => btn.addEventListener('click', resolve, { once: true }));
-
   // Cleanup
-  btn.remove();
-  overlay.classList.add('hidden');
+  replayEl.classList.add('hidden');
+  titleEl.textContent = '';
   textEl.textContent = '';
-  titleEl.textContent = '🔍 Crime Reconstruction';
+  progressEl.textContent = '';
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
 
-function typewrite(el, text, shouldSkip) {
+function typewrite(el, text) {
   return new Promise(resolve => {
     el.textContent = '';
     let idx = 0;
 
     const tick = () => {
-      if (shouldSkip() || idx >= text.length) {
-        el.textContent = text;        // show full text immediately
+      if (idx >= text.length) {
+        el.textContent = text;
         resolve();
         return;
       }
@@ -148,8 +122,4 @@ function waitForTTS() {
     // Small initial delay so speechSynthesis.speaking becomes true
     setTimeout(check, 300);
   });
-}
-
-function delay(ms) {
-  return new Promise(r => setTimeout(r, ms));
 }

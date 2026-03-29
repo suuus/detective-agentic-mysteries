@@ -5,6 +5,7 @@ import { initNPCMovement, updateNPCMovement } from '../npcMovement.js';
 import { updateTimedEvent, checkTimedEventTrigger, cancelTimedEvent, completeTimedEvent, restoreFledNPCs } from '../timedEvents.js';
 import { updateChase, maybeChaseOnWrongAccusation } from '../chase.js';
 import { initNPCApproach, updateNPCApproach, isNPCApproaching } from '../npcApproach.js';
+import { initEmotionVisuals, syncEmotionPositions } from '../npcEmotions.js';
 
 /**
  * CruiseManorScene — 2D cruise ship with rooms, NPCs, and evidence.
@@ -82,6 +83,7 @@ export default class CruiseManorScene extends Phaser.Scene {
     this._setupCamera(T);
     this._setupInput();
     initNPCApproach(this);
+    initEmotionVisuals(this, this.npcs, this.npcLabels);
     this._createAmbientParticles();
 
     // Weather effects (ocean rain by default)
@@ -689,6 +691,7 @@ export default class CruiseManorScene extends Phaser.Scene {
 
     this._handleMovement();
     updateNPCMovement(this, this.game.loop.delta);
+    syncEmotionPositions(this.npcs, this.npcLabels);
     updateTimedEvent(this, this.game.loop.delta);
     checkTimedEventTrigger(this);
     updateChase(this, this.game.loop.delta);
