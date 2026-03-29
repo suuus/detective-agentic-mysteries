@@ -1511,6 +1511,11 @@ app.get("/api/day", (_req, res) => {
 });
 
 app.post("/api/day/advance", async (_req, res) => {
+  // Night conversations can take several minutes (multiple AI exchanges)
+  // Extend timeout to 10 minutes to prevent premature disconnection
+  res.setTimeout(600_000);
+  if (_req.socket) _req.socket.setTimeout(600_000);
+
   const currentTime = gameState.getTimeOfDay();
 
   if (currentTime === 'day') {
@@ -1565,6 +1570,7 @@ app.post("/api/day/advance", async (_req, res) => {
       console.error("❌ Night conversations failed:", err.message);
     }
 
+    console.log(`📤 Sending ${conversations.length} night conversations to client (${conversations.reduce((n, c) => n + c.exchanges.length, 0)} total exchanges)`);
     res.json({
       timeOfDay: 'night',
       message: 'Night has fallen over Blackwood Manor...',

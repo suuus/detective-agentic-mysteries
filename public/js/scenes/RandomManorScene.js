@@ -293,17 +293,37 @@ export default class RandomManorScene extends Phaser.Scene {
       subtitleEl.textContent = 'The suspects are talking in the shadows' + '.'.repeat(dots);
     }, 500);
 
+    console.log('[Night] Calling advanceDay API...');
     let nightResult;
     try {
       nightResult = await window.gameAPI.advanceDay();
-    } catch(err) { console.error('Night advance failed:', err); }
+      console.log('[Night] advanceDay returned:', nightResult?.timeOfDay, 'conversations:', nightResult?.conversations?.length ?? 0);
+    } catch(err) {
+      console.error('[Night] advanceDay FAILED:', err);
+      subtitleEl.textContent = 'Connection lost — click to continue to dawn...';
+    }
 
     clearInterval(dotInterval);
 
     const conversations = nightResult?.conversations ?? [];
+    if (conversations.length === 0) {
+      console.warn('[Night] No conversations received from server');
+      subtitleEl.textContent = 'The night passes quietly...';
+      convoEl.innerHTML = '';
+      const fallbackP = document.createElement('p');
+      fallbackP.style.cssText = 'color:#e8dcc8;font-style:italic;text-align:center;margin:24px 0;opacity:0.7';
+      fallbackP.textContent = 'The suspects retreat to their rooms, speaking only in whispers you cannot hear.';
+      convoEl.appendChild(fallbackP);
+      promptEl.textContent = 'Click or press any key to continue...';
+      await new Promise(resolve => {
+        const done = () => { document.removeEventListener('keydown', done); promptEl.removeEventListener('click', done); resolve(); };
+        setTimeout(() => { document.addEventListener('keydown', done, { once: true }); promptEl.addEventListener('click', done, { once: true }); }, 400);
+      });
+    }
 
     for (let ci = 0; ci < conversations.length; ci++) {
       const convo = conversations[ci];
+      console.log(`[Night] Showing conversation ${ci+1}/${conversations.length}: ${convo.participantNames?.join(' & ')}`);
 
       titleEl.textContent = '\u{1F319} ' + convo.participantNames.join(' & ');
       subtitleEl.textContent = convo.location;
@@ -313,9 +333,14 @@ export default class RandomManorScene extends Phaser.Scene {
         const isA = ex.speaker === convo.participants[0];
         const div = document.createElement('div');
         div.className = 'night-exchange ' + (isA ? 'speaker-a' : 'speaker-b');
-        div.innerHTML =
-          '<div class="speaker-name">' + ex.speakerName + '</div>' +
-          '<div class="speaker-text">\u201C' + ex.text + '\u201D</div>';
+        const nameDiv = document.createElement('div');
+        nameDiv.className = 'speaker-name';
+        nameDiv.textContent = ex.speakerName;
+        const textDiv = document.createElement('div');
+        textDiv.className = 'speaker-text';
+        textDiv.textContent = '\u201C' + ex.text + '\u201D';
+        div.appendChild(nameDiv);
+        div.appendChild(textDiv);
         convoEl.appendChild(div);
       }
 
