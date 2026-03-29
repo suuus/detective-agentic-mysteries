@@ -1607,6 +1607,11 @@ app.post("/api/mystery/generate", async (_req, res) => {
       const propsPrompt = buildPropsPrompt(creativeInput);
       const charPrompt = buildCharacterAssetsPrompt(creativeInput);
 
+      // Signal sub-agents starting
+      sendEvent({ phase: 'creative_sub', sub: 'env', state: 'active' });
+      sendEvent({ phase: 'creative_sub', sub: 'props', state: 'active' });
+      sendEvent({ phase: 'creative_sub', sub: 'chars', state: 'active' });
+
       // Run all three in parallel — use allSettled so one failure doesn't discard the others
       const results = await Promise.allSettled([
         streamCollect(envSession, envPrompt, 180_000),
@@ -1617,6 +1622,11 @@ app.post("/api/mystery/generate", async (_req, res) => {
       const envRaw = results[0].status === 'fulfilled' ? results[0].value : '';
       const propsRaw = results[1].status === 'fulfilled' ? results[1].value : '';
       const charRaw = results[2].status === 'fulfilled' ? results[2].value : '';
+
+      // Signal sub-agent completion
+      sendEvent({ phase: 'creative_sub', sub: 'env', state: results[0].status === 'fulfilled' ? 'done' : 'failed' });
+      sendEvent({ phase: 'creative_sub', sub: 'props', state: results[1].status === 'fulfilled' ? 'done' : 'failed' });
+      sendEvent({ phase: 'creative_sub', sub: 'chars', state: results[2].status === 'fulfilled' ? 'done' : 'failed' });
 
       if (results[0].status === 'rejected') console.warn(`  Creative env agent failed:`, results[0].reason?.message);
       if (results[1].status === 'rejected') console.warn(`  Creative props agent failed:`, results[1].reason?.message);
@@ -1658,6 +1668,11 @@ app.post("/api/mystery/generate", async (_req, res) => {
       if (totalMissing > 0) {
         console.log(`  Creative: missing sections — env: [${missingEnv.join(', ')}], props: [${missingProps.join(', ')}], chars: [${missingChar.join(', ')}]. Follow-up...`);
         sendEvent({ phase: 'thinking', agent: 'creative', status: `🎨 Finishing ${totalMissing} remaining visual sections...` });
+
+        // Signal which sub-agents need repair
+        if (missingEnv.length > 0) sendEvent({ phase: 'creative_sub', sub: 'env', state: 'active' });
+        if (missingProps.length > 0) sendEvent({ phase: 'creative_sub', sub: 'props', state: 'active' });
+        if (missingChar.length > 0) sendEvent({ phase: 'creative_sub', sub: 'chars', state: 'active' });
 
         try {
           const repairPrompts: Promise<string>[] = [];
@@ -1703,9 +1718,11 @@ app.post("/api/mystery/generate", async (_req, res) => {
           const repairResults = await Promise.allSettled(repairPrompts);
           for (let i = 0; i < repairResults.length; i++) {
             const label = repairOrder[i];
+            const subId = label === 'env' ? 'env' : label === 'props' ? 'props' : 'chars';
             const missingKeys = label === 'env' ? missingEnv : label === 'props' ? missingProps : missingChar;
             if (repairResults[i].status === 'rejected') {
               console.warn(`  Creative repair (${label}) failed:`, (repairResults[i] as PromiseRejectedResult).reason?.message);
+              sendEvent({ phase: 'creative_sub', sub: subId, state: 'failed' });
               continue;
             }
             try {
@@ -1717,8 +1734,10 @@ app.post("/api/mystery/generate", async (_req, res) => {
                 }
               }
               console.log(`  Creative repair (${label}): recovered ${Object.keys(repairAssets).join(', ')}`);
+              sendEvent({ phase: 'creative_sub', sub: subId, state: 'done' });
             } catch (e: any) {
               console.warn(`  Creative repair (${label}) parse failed:`, e.message);
+              sendEvent({ phase: 'creative_sub', sub: subId, state: 'failed' });
             }
           }
         } catch (repairErr: any) {

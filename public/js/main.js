@@ -123,6 +123,14 @@ document.querySelectorAll('.level-btn').forEach(btn => {
           el.querySelector('.gen-step-state').textContent = 'waiting';
         }
       });
+      // Reset creative sub-agent steps
+      ['creative-env','creative-props','creative-chars'].forEach(id => {
+        const el = document.getElementById('gen-step-' + id);
+        if (el) {
+          el.classList.remove('active','done','failed');
+          el.querySelector('.gen-step-state').textContent = 'waiting';
+        }
+      });
       if (genLog) genLog.innerHTML = '';
       if (genSubtitle) genSubtitle.textContent = 'Your AI agents are designing a unique mystery...';
 
@@ -221,6 +229,23 @@ document.querySelectorAll('.level-btn').forEach(btn => {
 
           } else if (phase === 'creative_done') {
             setStepState('creative', 'done');
+
+          } else if (phase === 'creative_sub') {
+            const subEl = document.getElementById('gen-step-creative-' + update.sub);
+            if (subEl) {
+              subEl.classList.remove('active','done','failed');
+              if (update.state === 'active') {
+                subEl.classList.add('active');
+                subEl.querySelector('.gen-step-state').textContent = 'working...';
+              } else if (update.state === 'done') {
+                subEl.classList.add('done');
+                subEl.querySelector('.gen-step-state').textContent = '✓ done';
+              } else if (update.state === 'failed') {
+                subEl.classList.add('done');
+                subEl.querySelector('.gen-step-state').textContent = '⚠ retry';
+                subEl.style.borderColor = 'rgba(244,67,54,0.3)';
+              }
+            }
             if (update.palette) {
               const p = update.palette;
               logEntry(`🎨 Style: ${p.furnitureStyle || '-'} | Weather: ${p.weather || '-'} | Layout: ${p.roomLayout || '-'}`, 'entry-data');
@@ -290,6 +315,10 @@ document.querySelectorAll('.level-btn').forEach(btn => {
             ['architect','characters','director','creative','world'].forEach(id => {
               const el = document.getElementById('gen-step-' + id);
               if (el) { el.classList.remove('active','done'); el.querySelector('.gen-step-state').textContent = 'waiting'; }
+            });
+            ['creative-env','creative-props','creative-chars'].forEach(id => {
+              const el = document.getElementById('gen-step-' + id);
+              if (el) { el.classList.remove('active','done','failed'); el.querySelector('.gen-step-state').textContent = 'waiting'; el.style.borderColor = ''; }
             });
             const genLog = document.getElementById('gen-log');
             if (genLog) genLog.innerHTML = '';

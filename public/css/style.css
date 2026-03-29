@@ -1011,6 +1011,30 @@ body {
   font-style: normal;
 }
 
+/* Creative sub-agent steps */
+.gen-substeps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-left: 24px;
+  padding-left: 12px;
+  border-left: 2px solid rgba(201,168,76,0.15);
+}
+.gen-substep {
+  padding: 6px 10px;
+  font-size: 0.85rem;
+}
+.gen-substep .gen-step-icon {
+  font-size: 1rem;
+  width: 28px;
+}
+.gen-substep .gen-step-label {
+  font-size: 0.8rem;
+}
+.gen-substep .gen-step-desc {
+  font-size: 0.7rem;
+}
+
 @keyframes gen-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50%       { opacity: 0.3; transform: scale(0.7); }
