@@ -1056,7 +1056,7 @@ export default class RandomManorScene extends Phaser.Scene {
       const evFloor = this.multiFloor ? (pos.floor ?? 0) : 0;
       const { x: ix, y: iy } = tileToScreen(pos.x, pos.y, ox, oy);
       const glow = this.add.image(ix, iy, 'ev_glow')
-        .setDepth(isoDepth(pos.x, pos.y) + 0.35).setAlpha(0.7).setScale(1.5);
+        .setDepth(isoDepth(pos.x, pos.y) + 1).setAlpha(0.7).setScale(1.5);
       this.tweens.add({
         targets:glow, alpha:{from:0.4,to:1.0}, scale:{from:1.3,to:1.8},
         duration:1200, yoyo:true, repeat:-1, ease:'Sine.easeInOut'
@@ -1064,7 +1064,7 @@ export default class RandomManorScene extends Phaser.Scene {
       const texKey = 'ev_' + ev.id;
       const spKey = this.textures.exists(texKey) ? texKey : 'ev_glow';
       const evSprite = this.add.image(ix, iy, spKey)
-        .setDepth(isoDepth(pos.x, pos.y) + 0.4)
+        .setDepth(isoDepth(pos.x, pos.y) + 1.1)
         .setOrigin(0.5, 0.75);
       // Physics sprite in world space
       const physSprite = this.physics.add.sprite(pos.x*T+T/2, pos.y*T+T/2, spKey)
@@ -1360,10 +1360,10 @@ export default class RandomManorScene extends Phaser.Scene {
       const ty = ev.sprite.y / T;
       const { x, y } = tileToScreen(tx, ty, ox, oy);
       ev.isoSprite.setPosition(x, y);
-      ev.isoSprite.setDepth(isoDepth(tx, ty) + 0.4);
+      ev.isoSprite.setDepth(isoDepth(tx, ty) + 1.1);
       if (ev.glow) {
         ev.glow.setPosition(x, y);
-        ev.glow.setDepth(isoDepth(tx, ty) + 0.35);
+        ev.glow.setDepth(isoDepth(tx, ty) + 1);
       }
     }
   }
@@ -1737,13 +1737,13 @@ export default class RandomManorScene extends Phaser.Scene {
 
       const { x: eix, y: eiy } = tileToScreen(ev.x, ev.y, ox, oy);
       const glow = this.add.image(eix, eiy, 'ev_glow')
-        .setDepth(isoDepth(ev.x, ev.y) + 0.35).setAlpha(0.7).setScale(1.5);
+        .setDepth(isoDepth(ev.x, ev.y) + 1).setAlpha(0.7).setScale(1.5);
       this.tweens.add({
         targets: glow, alpha:{from:0.4,to:1.0}, scale:{from:1.3,to:1.8},
         duration:1200, yoyo:true, repeat:-1, ease:'Sine.easeInOut'
       });
       const evSprite = this.add.image(eix, eiy, evKey)
-        .setDepth(isoDepth(ev.x, ev.y) + 0.4).setScale(1.5)
+        .setDepth(isoDepth(ev.x, ev.y) + 1.1).setScale(1.5)
         .setOrigin(0.5, 0.75);
       const physSprite = this.physics.add.sprite(ev.x*T+T/2, ev.y*T+T/2, evKey)
         .setVisible(false).setImmovable(true);
