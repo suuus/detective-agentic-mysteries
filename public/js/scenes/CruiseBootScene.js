@@ -537,73 +537,255 @@ export default class CruiseBootScene extends Phaser.Scene {
   }
 
   _genFurniture() {
-    // Metal desk
-    this._tex('furn_ship_desk', 64, 32, g => {
-      g.fillStyle(0x4a4a50); g.fillRect(0,4,64,24);
-      g.fillStyle(0x3a3a40); g.fillRect(2,8,60,18);
-      g.fillStyle(0x666670); g.fillRect(28,12,8,6);
+    // ── Isometric helpers (same as BootScene manor furniture) ──
+    const dk = (c,f) => { const r=Math.floor(((c>>16)&0xff)*f); const gv=Math.floor(((c>>8)&0xff)*f); const b=Math.floor((c&0xff)*f); return (r<<16)|(gv<<8)|b; };
+    const S = 0.75; // iso slope ratio (hh/hw = 24/32)
+    const isoBox = (g, cx, baseY, hw, hh, depth, topC, leftC, rightC) => {
+      const topY = baseY - depth;
+      const diamondY = topY - hh;
+      g.fillStyle(leftC); g.beginPath();
+      g.moveTo(cx-hw, topY); g.lineTo(cx, topY+hh); g.lineTo(cx, baseY+hh); g.lineTo(cx-hw, baseY);
+      g.closePath(); g.fillPath();
+      g.fillStyle(rightC); g.beginPath();
+      g.moveTo(cx+hw, topY); g.lineTo(cx, topY+hh); g.lineTo(cx, baseY+hh); g.lineTo(cx+hw, baseY);
+      g.closePath(); g.fillPath();
+      g.fillStyle(topC); g.beginPath();
+      g.moveTo(cx, diamondY); g.lineTo(cx+hw, topY); g.lineTo(cx, topY+hh); g.lineTo(cx-hw, topY);
+      g.closePath(); g.fillPath();
+      return { topY, diamondY };
+    };
+    const rightFaceRect = (g, x, y, w, h, color, alpha) => {
+      g.fillStyle(color, alpha ?? 1); g.beginPath();
+      g.moveTo(x, y); g.lineTo(x+w, y - w*S); g.lineTo(x+w, y - w*S + h); g.lineTo(x, y+h);
+      g.closePath(); g.fillPath();
+    };
+    const leftFaceRect = (g, x, y, w, h, color, alpha) => {
+      g.fillStyle(color, alpha ?? 1); g.beginPath();
+      g.moveTo(x, y); g.lineTo(x-w, y - w*S); g.lineTo(x-w, y - w*S + h); g.lineTo(x, y+h);
+      g.closePath(); g.fillPath();
+    };
+    const topDiamond = (g, cx, cy, hw2, hh2, color, alpha) => {
+      g.fillStyle(color, alpha ?? 1); g.beginPath();
+      g.moveTo(cx, cy-hh2); g.lineTo(cx+hw2, cy); g.lineTo(cx, cy+hh2); g.lineTo(cx-hw2, cy);
+      g.closePath(); g.fillPath();
+    };
+
+    // Metal desk — hw=24, hh=18, depth=10
+    this._tex('furn_ship_desk', 48, 54, g => {
+      const metal = 0x4a4a50;
+      const hw=24, hh=18, depth=10, cx=24, baseY=54-hh;
+      g.fillStyle(dk(metal,0.4));
+      g.fillRect(cx-hw+2, baseY+2, 2, 8); g.fillRect(cx+hw-4, baseY-6, 2, 8);
+      const { topY, diamondY } = isoBox(g, cx, baseY, hw, hh, depth, metal, dk(metal,0.55), dk(metal,0.75));
+      topDiamond(g, cx, diamondY, hw-4, hh-3, dk(metal,0.85), 0.5);
+      const rFaceTop = topY + hh;
+      rightFaceRect(g, cx+2, rFaceTop+2, 14, 3, 0x666670);
     });
-    // Cabin bed
-    this._tex('furn_ship_bed', 48, 64, g => {
-      g.fillStyle(0x4a4a50); g.fillRect(0,0,48,64);
-      g.fillStyle(0xf5f5f5); g.fillRect(4,8,40,48);
-      g.fillStyle(0x1a2a4a); g.fillRect(4,28,40,28);
+
+    // Cabin bed — hw=28, hh=21, depth=10
+    this._tex('furn_ship_bed', 56, 60, g => {
+      const frame = 0x4a4a50;
+      const hw=28, hh=21, depth=10, cx=28, baseY=60-hh;
+      isoBox(g, cx, baseY, hw, hh, depth, frame, dk(frame,0.5), dk(frame,0.7));
+      const topY = baseY - depth;
+      topDiamond(g, cx, topY, hw-2, hh-2, 0xf5f5f5);
+      topDiamond(g, cx+4, topY+4, hw*0.6, hh*0.6, 0x1a2a4a);
+      topDiamond(g, cx-6, topY-2, hw*0.3, hh*0.3, 0xf0f0f0);
     });
-    // Dining table
-    this._tex('furn_ship_table', 48, 32, g => {
-      g.fillStyle(0x5c3a1e); g.fillRect(4,4,40,24);
-      g.fillStyle(0x6b4423); g.fillRect(6,6,36,20);
+
+    // Dining table — hw=20, hh=15, depth=4
+    this._tex('furn_ship_table', 40, 44, g => {
+      const wood = 0x5c3a1e;
+      const hw=20, hh=15, depth=4, cx=20, baseY=44-hh;
+      // Front-left leg, front-right leg, and front-center leg (below bottom vertex)
+      g.fillStyle(dk(wood,0.45));
+      g.fillRect(cx-hw+4, baseY+2, 2, 10);
+      g.fillRect(cx+hw-6, baseY, 2, 10);
+      g.fillRect(cx-1, baseY+hh-2, 2, 10);
+      isoBox(g, cx, baseY, hw, hh, depth, 0x6b4423, dk(wood,0.55), dk(wood,0.75));
     });
-    // Bar counter
-    this._tex('furn_bar', 64, 32, g => {
-      g.fillStyle(0x3a2010); g.fillRect(0,4,64,24);
-      g.fillStyle(0x5c3a1e); g.fillRect(2,2,60,6);
-      g.fillStyle(0xc9a84c); g.fillRect(10,10,6,8); g.fillRect(26,10,6,8); g.fillRect(42,10,6,8);
+
+    // Bar counter — hw=24, hh=18, depth=12
+    this._tex('furn_bar', 48, 54, g => {
+      const wood = 0x3a2010;
+      const hw=24, hh=18, depth=12, cx=24, baseY=54-hh;
+      const { topY, diamondY } = isoBox(g, cx, baseY, hw, hh, depth, 0x5c3a1e, dk(wood,0.55), dk(wood,0.75));
+      // Polished bar top surface
+      topDiamond(g, cx, topY, hw-2, hh-2, 0x6b4423, 0.7);
+      // Glasses on top — positioned relative to topY (center of top diamond)
+      topDiamond(g, cx-6, topY+2, 3, 2, 0xc9a84c, 0.9);
+      topDiamond(g, cx+2, topY+4, 3, 2, 0xc9a84c, 0.9);
+      topDiamond(g, cx+9, topY, 3, 2, 0xc9a84c, 0.9);
+      // Trim on both faces
+      const rFaceTop = topY + hh;
+      const lFaceTop = topY + hh;
+      rightFaceRect(g, cx+3, rFaceTop+2, 16, 3, dk(wood,0.3));
+      leftFaceRect(g, cx-3, lFaceTop+2, 16, 3, dk(wood,0.3));
     });
-    // Casino slot machine
-    this._tex('furn_slot_machine', 24, 32, g => {
-      g.fillStyle(0xcc3333); g.fillRect(2,4,20,24);
-      g.fillStyle(0x222222); g.fillRect(5,8,14,10);
-      g.fillStyle(0xf5f5f5); g.fillRect(6,9,4,8); g.fillRect(11,9,4,8); g.fillRect(16,9,4,8);
-      g.fillStyle(0xc9a84c); g.fillCircle(12,24,3);
+
+    // Casino slot machine — hw=10, hh=8, depth=16
+    this._tex('furn_slot_machine', 20, 40, g => {
+      const red = 0xcc3333;
+      const hw=10, hh=8, depth=16, cx=10, baseY=40-hh;
+      const { topY } = isoBox(g, cx, baseY, hw, hh, depth, red, dk(red,0.5), dk(red,0.7));
+      const rFaceTop = topY + hh;
+      rightFaceRect(g, cx+1, rFaceTop+2, 7, 8, 0x222222);
+      rightFaceRect(g, cx+2, rFaceTop+3, 2, 6, 0xf5f5f5);
+      rightFaceRect(g, cx+5, rFaceTop+3, 2, 6, 0xf5f5f5);
+      g.fillStyle(0xc9a84c); g.fillCircle(cx, baseY+hh-2, 2);
     });
-    // Medical examination bed
-    this._tex('furn_medical_bed', 48, 64, g => {
-      g.fillStyle(0xcccccc); g.fillRect(0,0,48,64);
-      g.fillStyle(0xf5f5f5); g.fillRect(4,4,40,56);
-      g.fillStyle(0xaaddaa); g.fillRect(4,4,40,12);
+
+    // Medical examination bed — hw=24, hh=18, depth=6
+    this._tex('furn_medical_bed', 48, 48, g => {
+      const metal = 0xcccccc;
+      const hw=24, hh=18, depth=6, cx=24, baseY=48-hh;
+      isoBox(g, cx, baseY, hw, hh, depth, metal, dk(metal,0.55), dk(metal,0.75));
+      const topY = baseY - depth;
+      topDiamond(g, cx, topY, hw-2, hh-2, 0xf5f5f5);
+      topDiamond(g, cx+2, topY+2, hw*0.5, hh*0.5, 0xaaddaa);
     });
-    // Kitchen stove (reuse pattern)
-    this._tex('furn_stove', 48, 32, g => {
-      g.fillStyle(0x444444); g.fillRect(0,0,48,32);
-      g.fillStyle(0x222222); g.fillCircle(16,12,6); g.fillCircle(34,12,6);
+
+    // Kitchen stove — hw=20, hh=15, depth=14
+    this._tex('furn_stove', 40, 44, g => {
+      const metal = 0x444444;
+      const hw=20, hh=15, depth=14, cx=20, baseY=44-hh;
+      const { topY } = isoBox(g, cx, baseY, hw, hh, depth, metal, dk(metal,0.45), dk(metal,0.7));
+      // Burners on top face — iso diamonds centered on topY
+      topDiamond(g, cx-6, topY-2, 5, 4, 0x333333);
+      topDiamond(g, cx+6, topY+2, 5, 4, 0x333333);
+      topDiamond(g, cx-6, topY-2, 3, 2, 0x222222);
+      topDiamond(g, cx+6, topY+2, 3, 2, 0x222222);
+      // Oven door — right face
+      const rFaceTop = topY + hh;
+      rightFaceRect(g, cx+3, rFaceTop+2, 14, 8, dk(metal,0.5));
+      rightFaceRect(g, cx+8, rFaceTop+4, 6, 2, 0x888888);
     });
-    // Bridge console/computers
-    this._tex('furn_console', 64, 32, g => {
-      g.fillStyle(0x333338); g.fillRect(0,4,64,24);
-      g.fillStyle(0x1a3a2a); g.fillRect(4,6,26,16);
-      g.fillStyle(0x1a2a3a); g.fillRect(34,6,26,16);
-      g.fillStyle(0x44cc66); g.fillRect(8,10,4,2); g.fillRect(14,10,4,2);
-      g.fillStyle(0x44aacc); g.fillRect(38,10,4,2); g.fillRect(44,10,4,2);
+
+    // Bridge console — hw=24, hh=18, depth=10
+    this._tex('furn_console', 48, 54, g => {
+      const metal = 0x333338;
+      const hw=24, hh=18, depth=10, cx=24, baseY=54-hh;
+      const { topY } = isoBox(g, cx, baseY, hw, hh, depth, metal, dk(metal,0.55), dk(metal,0.75));
+      const rFaceTop = topY + hh;
+      const lFaceTop = topY + hh;
+      // Right face: main screen panel (w=14 keeps it within the face)
+      rightFaceRect(g, cx+2, rFaceTop+1, 14, 8, 0x0a2a1a);
+      rightFaceRect(g, cx+3, rFaceTop+2, 12, 6, 0x1a3a2a);
+      // Screen data lines
+      rightFaceRect(g, cx+4, rFaceTop+3, 5, 1, 0x44cc66);
+      rightFaceRect(g, cx+4, rFaceTop+5, 7, 1, 0x44aacc);
+      rightFaceRect(g, cx+10, rFaceTop+3, 3, 1, 0xcc4444);
+      // Left face: secondary screen
+      leftFaceRect(g, cx-2, lFaceTop+1, 14, 8, 0x0a1a2a);
+      leftFaceRect(g, cx-3, lFaceTop+2, 12, 6, 0x1a2a3a);
+      leftFaceRect(g, cx-4, lFaceTop+3, 5, 1, 0x44aacc);
+      leftFaceRect(g, cx-4, lFaceTop+5, 7, 1, 0x44cc66);
+      leftFaceRect(g, cx-10, lFaceTop+3, 3, 1, 0xccaa00);
+      // Top face: keyboard + indicators — centered on topY
+      topDiamond(g, cx+2, topY+2, 8, 6, 0x222228, 0.7);
+      topDiamond(g, cx-8, topY-2, 3, 2, 0x44cc66, 0.9);
+      topDiamond(g, cx-4, topY+1, 3, 2, 0xcc4444, 0.9);
+      topDiamond(g, cx+10, topY-1, 3, 2, 0xccaa00, 0.9);
     });
-    // Pool (blue rectangle)
-    this._tex('furn_pool', 64, 32, g => {
-      g.fillStyle(0xcccccc); g.fillRect(0,0,64,32);
-      g.fillStyle(0x2a6a8a); g.fillRect(3,3,58,26);
-      g.fillStyle(0x3a8aaa); g.fillRect(6,6,52,20);
+
+    // Pool — big iso-aligned rectangle (3 tiles × 1.5 tiles on the ground plane)
+    // Tile-X axis in screen: (+1, +S) per pixel. Tile-Y axis: (-1, +S) per pixel.
+    // Pool extends W px along tile-X, D px along tile-Y.
+    this._tex('furn_pool', 160, 108, g => {
+      const W = 72, D = 36, depth = 6;
+      // Top-left corner of the rectangle (start point)
+      const ox = 44, oy = 2;
+      // Four corners of the top face following iso axes
+      const tl = { x: ox,             y: oy };
+      const tr = { x: ox + W,         y: oy + W * S };
+      const br = { x: ox + W - D,     y: oy + W * S + D * S };
+      const bl = { x: ox - D,         y: oy + D * S };
+
+      // Bottom (left) face — viewer-facing edge from BL to BR
+      g.fillStyle(dk(0xbbbbbb, 0.5)); g.beginPath();
+      g.moveTo(bl.x, bl.y); g.lineTo(br.x, br.y);
+      g.lineTo(br.x, br.y + depth); g.lineTo(bl.x, bl.y + depth);
+      g.closePath(); g.fillPath();
+      // Bottom (right) face — viewer-facing edge from BR to TR
+      g.fillStyle(dk(0xbbbbbb, 0.7)); g.beginPath();
+      g.moveTo(br.x, br.y); g.lineTo(tr.x, tr.y);
+      g.lineTo(tr.x, tr.y + depth); g.lineTo(br.x, br.y + depth);
+      g.closePath(); g.fillPath();
+
+      // Top face — pool rim
+      g.fillStyle(0xcccccc); g.beginPath();
+      g.moveTo(tl.x, tl.y); g.lineTo(tr.x, tr.y);
+      g.lineTo(br.x, br.y); g.lineTo(bl.x, bl.y);
+      g.closePath(); g.fillPath();
+
+      // Water surface — inset along both iso axes
+      const i = 6;
+      const wtl = { x: tl.x + i - i*0,        y: tl.y + i * S + i * S };  // inset from TL along both axes
+      // More precisely: move +i along tile-X and +i along tile-Y from each corner
+      const wt = { x: ox + i,       y: oy + i * S };         // TL inset along X
+      const wr = { x: ox + W - i,   y: oy + (W - i) * S };  // TR inset back along X
+      const wb = { x: ox + W - i - (D - i), y: oy + (W - i) * S + (D - i) * S }; // BR
+      const wl = { x: ox - (D - i), y: oy + (D - i) * S };  // BL inset back along Y
+      // Simpler: just inset each corner by i pixels along the two adjacent axes
+      const wi = 6;
+      const w_tl = { x: tl.x + wi + wi,   y: tl.y + wi*S + wi*S };  // wrong, do it properly
+      // Each edge inset = move the edge inward by `wi` perpendicular to itself
+      // For iso rect, inset along tile-X shifts (-1, -S) normalized, along tile-Y shifts (+1, -S)
+      // Simplest correct approach: shrink W and D by 2*wi and offset start
+      const iW = W - 2*wi, iD = D - 2*wi;
+      const iox = ox + wi + wi, ioy = oy + wi*S + wi*S; // inset origin
+      // Nope — let me just compute the 4 inset corners directly
+      const pool_tl = { x: tl.x + wi,       y: tl.y + wi*S };       // move along +X axis
+      const pool_tr = { x: tr.x,            y: tr.y + wi*S };       // move along +Y axis  
+      const pool_br = { x: br.x - wi,       y: br.y - wi*S };       // move along -X axis
+      const pool_bl = { x: bl.x,            y: bl.y - wi*S };       // move along -Y axis
+
+      // Hmm that won't be right either. Let me just use the simple shrunk version:
+      g.fillStyle(0x155570); g.beginPath();
+      g.moveTo(ox + wi,         oy + wi*S + wi*S);
+      g.lineTo(ox + W - wi,     oy + (W-wi)*S + wi*S);
+      g.lineTo(ox + W - wi - (D-2*wi), oy + (W-wi)*S + wi*S + (D-2*wi)*S);
+      g.lineTo(ox - (D-2*wi) + wi,     oy + wi*S + wi*S + (D-2*wi)*S);
+      g.closePath(); g.fillPath();
+
+      // Lighter water center
+      const wi2 = 14;
+      g.fillStyle(0x2a7a9a, 0.5); g.beginPath();
+      g.moveTo(ox + wi2,           oy + wi2*S + wi2*S);
+      g.lineTo(ox + W - wi2,       oy + (W-wi2)*S + wi2*S);
+      g.lineTo(ox + W - wi2 - (D-2*wi2), oy + (W-wi2)*S + wi2*S + (D-2*wi2)*S);
+      g.lineTo(ox - (D-2*wi2) + wi2,     oy + wi2*S + wi2*S + (D-2*wi2)*S);
+      g.closePath(); g.fillPath();
     });
-    // Bookshelf (reuse pattern)
-    this._tex('furn_bookshelf', 64, 32, g => {
-      g.fillStyle(0x4a2e16); g.fillRect(0,0,64,32);
-      const colors=[0x8B0000,0x00008B,0x006400,0x8B8000,0x4B0082,0x800020];
-      for(let i=0;i<10;i++){ g.fillStyle(colors[i%6]); g.fillRect(4+i*6,4,5,12); }
-      for(let i=0;i<10;i++){ g.fillStyle(colors[(i+3)%6]); g.fillRect(4+i*6,18,5,12); }
+
+    // Bookshelf — hw=24, hh=18, depth=24
+    this._tex('furn_bookshelf', 48, 60, g => {
+      const wood = 0x4a2e16;
+      const hw=24, hh=18, depth=24, cx=24, baseY=60-hh;
+      const { topY } = isoBox(g, cx, baseY, hw, hh, depth, wood, dk(wood,0.45), dk(wood,0.65));
+      const rFaceTop = topY + hh;
+      const lFaceTop = topY + hh;
+      for (let i = 1; i <= 2; i++) {
+        rightFaceRect(g, cx+2, rFaceTop + i*7, hw-4, 1, dk(wood,0.3));
+        leftFaceRect(g, cx-2, lFaceTop + i*7, hw-4, 1, dk(wood,0.3));
+      }
+      const cols = [0x8B0000,0x00008B,0x006400,0x8B8000,0x4B0082,0x800020,0xDAA520];
+      for (let row = 0; row < 3; row++) {
+        for (let i = 0; i < 3; i++) {
+          rightFaceRect(g, cx+2+i*6, rFaceTop+1+row*7, 5, 5, cols[(row*3+i) % cols.length]);
+          leftFaceRect(g, cx-2-i*6, lFaceTop+1+row*7, 5, 5, cols[(row*3+i+3) % cols.length]);
+        }
+      }
     });
-    // Crew locker
-    this._tex('furn_locker', 24, 32, g => {
-      g.fillStyle(0x4a4a50); g.fillRect(0,0,24,32);
-      g.fillStyle(0x3a3a40); g.fillRect(2,2,9,28); g.fillRect(13,2,9,28);
-      g.fillStyle(0xc9a84c); g.fillRect(9,14,2,4); g.fillRect(20,14,2,4);
+
+    // Crew locker — hw=10, hh=8, depth=16
+    this._tex('furn_locker', 20, 40, g => {
+      const metal = 0x4a4a50;
+      const hw=10, hh=8, depth=16, cx=10, baseY=40-hh;
+      const { topY } = isoBox(g, cx, baseY, hw, hh, depth, metal, dk(metal,0.5), dk(metal,0.7));
+      const rFaceTop = topY + hh;
+      rightFaceRect(g, cx+1, rFaceTop+1, 7, 14, dk(metal,0.55));
+      g.fillStyle(0xc9a84c); g.fillCircle(cx+7, rFaceTop+7, 1);
     });
   }
 

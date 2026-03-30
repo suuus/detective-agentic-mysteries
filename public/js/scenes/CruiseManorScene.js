@@ -100,6 +100,10 @@ export default class CruiseManorScene extends Phaser.Scene {
     initEmotionVisuals(this, this.npcs, this.npcLabels);
     this._createAmbientParticles();
 
+    // Proximity speech bubble state
+    this._proxBubbles = {};      // { npcId: { text: Phaser.Text, timer: ms } }
+    this._proxCooldowns = {};    // { npcId: timestamp of last bubble }
+
     // Weather effects (ocean rain by default)
     createWeatherTextures(this);
     createWeather(this, 'rain', this.MAP_W, this.MAP_H, T);
@@ -394,7 +398,7 @@ export default class CruiseManorScene extends Phaser.Scene {
 
       const label = this.npcLabels[npcPos.id];
       if (label) {
-        label.setPosition(newX, ny * T - 8);
+        label.setPosition(newX, ny * T - 16);
       }
     }
 
@@ -835,6 +839,7 @@ export default class CruiseManorScene extends Phaser.Scene {
     updateChase(this, this.game.loop.delta);
     updateLighting(this);
     this._handleInteractions();
+    this._checkProximityBubbles();
     updateNPCApproach(this, this.game.loop.delta);
     this._updateRoomLabel();
   }
@@ -887,16 +892,16 @@ export default class CruiseManorScene extends Phaser.Scene {
         this._npcFacing[id] = dir;
       }
 
-      // Labels follow iso sprite
+      // Label + bg follow iso sprite
       const label = this.npcLabels[id];
       if (label) {
-        label.setPosition(x, y - 22);
+        label.setPosition(x, y - 10);
         label.setDepth(isoDepth(tx, ty) + 10.1);
-        const bg = this._npcLabelBgs?.[id];
-        if (bg) {
-          bg.setPosition(x, y - 22);
-          bg.setDepth(isoDepth(tx, ty) + 10);
-        }
+      }
+      const bg = this._npcLabelBgs?.[id];
+      if (bg) {
+        bg.setPosition(x, y - 10);
+        bg.setDepth(isoDepth(tx, ty) + 10);
       }
     }
   }
@@ -918,11 +923,13 @@ export default class CruiseManorScene extends Phaser.Scene {
     }
 
     if (closest) {
-      // Position prompt at iso sprite location
-      const isoSprite = closestType === 'npc'
-        ? (this._npcIsoSprites?.[closest.id] || closest.sprite)
-        : (this.evidenceItems[closest.id]?.isoSprite || closest.sprite);
-      this.interactPrompt.setPosition(isoSprite.x, isoSprite.y - 28);
+      // Position the interact prompt at iso coordinates
+      const ox2 = this._isoOffsetX, oy2 = this._isoOffsetY;
+      const closestTx = closest.sprite.x / this.T;
+      const closestTy = closest.sprite.y / this.T;
+      const { x: px, y: py } = tileToScreen(closestTx, closestTy, ox2, oy2);
+      this.interactPrompt.setPosition(px, py - 36);
+      this.interactPrompt.setDepth(isoDepth(closestTx, closestTy) + 20);
       const label = closestType==='npc'
         ? (isNPCApproaching(this, closest.id) ? '[E] Listen' : `[E] Talk to ${closest.name}`)
         : `[E] Examine`;
@@ -944,6 +951,67 @@ export default class CruiseManorScene extends Phaser.Scene {
     } else {
       this.interactPrompt.setVisible(false);
       this._ePressed = false;
+    }
+  }
+
+  _checkProximityBubbles() {
+    const BUBBLE_RANGE = 90;
+    const COOLDOWN = 60000;
+    const DISPLAY_TIME = 3000;
+    const now = Date.now();
+    const T = this.T;
+
+    const PHRASES = {
+      neutral: ['...', 'Hmm.', 'Detective.'],
+      angry:   ["Haven't you bothered me enough?", 'What now?', 'I have nothing to say.', '*glares*'],
+      nervous: ['Oh... you again...', '*fidgets*', 'I-I was just...', 'Please, I...'],
+      friendly:['Detective, a moment?', 'I remembered something...', 'Perhaps I can help.', 'Over here...'],
+    };
+
+    // Update existing bubbles
+    for (const [id, bubble] of Object.entries(this._proxBubbles)) {
+      bubble.timer -= this.game.loop.delta;
+      if (bubble.timer <= 0) {
+        bubble.text.destroy();
+        delete this._proxBubbles[id];
+      } else {
+        const sprite = this.npcs[id];
+        if (sprite && !sprite.destroyed) {
+          const ox = this._isoOffsetX, oy = this._isoOffsetY;
+          const tx = sprite.x / T, ty = sprite.y / T;
+          const { x: bx, y: by } = tileToScreen(tx, ty, ox, oy);
+          bubble.text.setPosition(bx, by - 40);
+          bubble.text.setDepth(isoDepth(tx, ty) + 15);
+          bubble.text.setAlpha(Math.min(1, bubble.timer / 500));
+        }
+      }
+    }
+
+    // Check NPCs in range for new bubbles
+    for (const [id, sprite] of Object.entries(this.npcs)) {
+      if (this._proxBubbles[id]) continue;
+      if (this._proxCooldowns[id] && now - this._proxCooldowns[id] < COOLDOWN) continue;
+
+      const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, sprite.x, sprite.y);
+      if (d > BUBBLE_RANGE || d < 40) continue;
+
+      const mood = window._npcMoodVariants?.[id] || 'neutral';
+      const pool = PHRASES[mood] || PHRASES.neutral;
+      const text = pool[Math.floor(Math.random() * pool.length)];
+
+      const ox = this._isoOffsetX, oy = this._isoOffsetY;
+      const bTx = sprite.x / T, bTy = sprite.y / T;
+      const { x: bx2, y: by2 } = tileToScreen(bTx, bTy, ox, oy);
+      const bubble = this.add.text(bx2, by2 - 40, text, {
+        fontFamily: '"Lora", serif', fontSize: '8px', color: '#e8dcc8',
+        backgroundColor: 'rgba(10,10,10,0.85)', padding: { x: 5, y: 3 },
+        stroke: '#333', strokeThickness: 1,
+      }).setOrigin(0.5).setDepth(15).setAlpha(0);
+
+      this.tweens.add({ targets: bubble, alpha: 1, duration: 300 });
+
+      this._proxBubbles[id] = { text: bubble, timer: DISPLAY_TIME };
+      this._proxCooldowns[id] = now;
     }
   }
 
