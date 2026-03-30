@@ -82,12 +82,30 @@ export default class RandomBootScene extends Phaser.Scene {
         case 'roundRect':
           g.fillStyle(c, a); g.fillRoundedRect(op.x, op.y, op.w, op.h, op.r || 4);
           break;
+        case 'diamond': {
+          const dhw = op.hw || 16, dhh = op.hh || 12;
+          g.fillStyle(c, a); g.beginPath();
+          g.moveTo(op.cx, op.cy - dhh); g.lineTo(op.cx + dhw, op.cy);
+          g.lineTo(op.cx, op.cy + dhh); g.lineTo(op.cx - dhw, op.cy);
+          g.closePath(); g.fillPath();
+          break;
+        }
+        case 'poly': {
+          const pts = op.points;
+          if (Array.isArray(pts) && pts.length >= 6) {
+            g.fillStyle(c, a); g.beginPath();
+            g.moveTo(pts[0], pts[1]);
+            for (let pi = 2; pi < pts.length; pi += 2) g.lineTo(pts[pi], pts[pi+1]);
+            g.closePath(); g.fillPath();
+          }
+          break;
+        }
       }
     }
   }
 
   _genPlayer() {
-    const S = 32;
+    const S = 48;
     const dirNames = ['down','left','right','up'];
     for (let d = 0; d < 4; d++) {
       for (let f = 0; f < 3; f++) {
@@ -95,17 +113,38 @@ export default class RandomBootScene extends Phaser.Scene {
         this._tex(key, S, S, (g) => {
           const cx = S/2, cy = S/2;
           const wb = f === 1 ? -1 : f === 2 ? 1 : 0;
-          g.fillStyle(0x5c4a32); g.fillRect(cx-6, cy-2+wb, 12, 14);
-          g.fillStyle(0xe8c99b); g.fillRect(cx-5, cy-10+wb, 10, 9);
-          g.fillStyle(0x3a2f24); g.fillRect(cx-7, cy-14+wb, 14, 5); g.fillRect(cx-5, cy-16+wb, 10, 3);
-          if (dirNames[d] !== 'up') {
-            g.fillStyle(0x222222);
-            if (dirNames[d] === 'down') { g.fillRect(cx-3,cy-6+wb,2,2); g.fillRect(cx+1,cy-6+wb,2,2); }
-            else if (dirNames[d] === 'left') g.fillRect(cx-4,cy-6+wb,2,2);
-            else g.fillRect(cx+2,cy-6+wb,2,2);
+          const dir = dirNames[d];
+          const coat = 0x5c4a32;
+          g.fillStyle(coat); g.fillRect(cx-7, cy-2+wb, 14, 16); g.fillRect(cx-9, cy-1+wb, 18, 4);
+          g.fillStyle(0x6b5a3e); g.fillTriangle(cx-2, cy-2+wb, cx, cy+4+wb, cx+2, cy-2+wb);
+          g.fillStyle(0xe0c8a0); g.fillRect(cx-3, cy-5+wb, 6, 5); g.fillCircle(cx, cy-12+wb, 9);
+          g.fillStyle(0x4a3a2a); g.fillRect(cx-8, cy-20+wb, 16, 6); g.fillRect(cx-9, cy-17+wb, 18, 3);
+          if (dir === 'left' || dir === 'down') g.fillRect(cx-9, cy-15+wb, 4, 5);
+          if (dir === 'right' || dir === 'down') g.fillRect(cx+5, cy-15+wb, 4, 5);
+          g.fillStyle(0x3a2f24); g.fillRect(cx-10, cy-22+wb, 20, 4); g.fillRect(cx-7, cy-26+wb, 14, 5);
+          g.fillStyle(0x5c4a32); g.fillRect(cx-6, cy-22+wb, 12, 2);
+          const eyeY = cy - 12 + wb;
+          if (dir === 'up') { g.fillStyle(0x4a3a2a); g.fillRect(cx-7, eyeY-2, 14, 7); }
+          else if (dir === 'left') {
+            g.fillStyle(0xffffff); g.fillRect(cx-5, eyeY-1, 3, 3);
+            g.fillStyle(0x333333); g.fillRect(cx-5, eyeY, 2, 2);
+            g.fillStyle(0xaa7766); g.fillRect(cx-5, eyeY+7, 3, 1);
+          } else if (dir === 'right') {
+            g.fillStyle(0xffffff); g.fillRect(cx+2, eyeY-1, 3, 3);
+            g.fillStyle(0x333333); g.fillRect(cx+3, eyeY, 2, 2);
+            g.fillStyle(0xaa7766); g.fillRect(cx+2, eyeY+7, 3, 1);
+          } else {
+            g.fillStyle(0xffffff); g.fillRect(cx-5, eyeY-1, 4, 3); g.fillRect(cx+1, eyeY-1, 4, 3);
+            g.fillStyle(0x333333); g.fillRect(cx-4, eyeY, 2, 2); g.fillRect(cx+2, eyeY, 2, 2);
+            g.fillStyle(0xaa7766); g.fillRect(cx-2, eyeY+7, 4, 1);
           }
-          g.fillStyle(0x2a2a2a); g.fillRect(cx-4, cy+12, 3, 4); g.fillRect(cx+1, cy+12, 3, 4);
-          g.fillStyle(0x1a1a1a); g.fillRect(cx-5, cy+15, 4, 2); g.fillRect(cx+1, cy+15, 4, 2);
+          g.fillStyle(coat, 0.9); g.fillRect(cx-10, cy+wb, 3, 12); g.fillRect(cx+7, cy+wb, 3, 12);
+          g.fillStyle(0xe0c8a0); g.fillRect(cx-10, cy+11+wb, 3, 3); g.fillRect(cx+7, cy+11+wb, 3, 3);
+          g.fillStyle(0x2a2a2a);
+          if (f === 1) { g.fillRect(cx-5, cy+14, 4, 6); g.fillRect(cx+2, cy+13, 4, 7); }
+          else if (f === 2) { g.fillRect(cx-5, cy+13, 4, 7); g.fillRect(cx+2, cy+14, 4, 6); }
+          else { g.fillRect(cx-5, cy+14, 4, 6); g.fillRect(cx+1, cy+14, 4, 6); }
+          g.fillStyle(0x1a1a1a); g.fillRect(cx-6, cy+19, 5, 2); g.fillRect(cx+1, cy+19, 5, 2);
         });
       }
     }
@@ -124,28 +163,106 @@ export default class RandomBootScene extends Phaser.Scene {
     const wallCol = this._hex(v.wallColor || '#2d1117');
     const wallAcc = this._hex(v.wallAccent || '#3a1520');
 
-    // Floor tiles — base set plus new ones
-    this._tex('tile_floor', 32, 32, g => { g.fillStyle(0x3d3225); g.fillRect(0,0,32,32); g.lineStyle(1,0x342b1f); g.strokeRect(0,0,32,32); });
-    this._tex('tile_carpet', 32, 32, g => { g.fillStyle(0x4a1a2a); g.fillRect(0,0,32,32); g.lineStyle(1,0xc9a84c,0.2); g.strokeRect(4,4,24,24); });
-    this._tex('tile_metal', 32, 32, g => { g.fillStyle(0x3a3a3a); g.fillRect(0,0,32,32); g.fillStyle(0x444444); g.fillCircle(8,8,2); g.fillCircle(24,8,2); g.fillCircle(8,24,2); g.fillCircle(24,24,2); });
-    this._tex('tile_wood_deck', 32, 32, g => { g.fillStyle(0x5c4a32); g.fillRect(0,0,32,32); g.lineStyle(1,0x4a3a22); for(let i=0;i<4;i++){ g.beginPath(); g.moveTo(0,8+i*8); g.lineTo(32,8+i*8); g.strokePath(); }});
-    this._tex('tile_carpet_blue', 32, 32, g => { g.fillStyle(0x1a2a4a); g.fillRect(0,0,32,32); g.lineStyle(1,0x2a3a5a,0.3); g.strokeRect(4,4,24,24); });
-    this._tex('tile_carpet_red', 32, 32, g => { g.fillStyle(0x4a1a1a); g.fillRect(0,0,32,32); g.lineStyle(1,0x5a2a2a,0.3); g.strokeRect(4,4,24,24); });
-    this._tex('tile_tile_white', 32, 32, g => { g.fillStyle(0xd0d0d0); g.fillRect(0,0,32,32); g.fillStyle(0xc0c0c0); g.fillRect(0,0,16,16); g.fillRect(16,16,16,16); });
-    // New floor types
-    this._tex('tile_sand', 32, 32, g => { g.fillStyle(0xc2b280); g.fillRect(0,0,32,32); g.fillStyle(0xb8a870,0.5); g.fillRect(4,12,8,3); g.fillRect(18,6,6,2); });
-    this._tex('tile_ice', 32, 32, g => { g.fillStyle(0xb0d4e8); g.fillRect(0,0,32,32); g.fillStyle(0xc8e4f8,0.6); g.fillRect(2,2,12,6); g.fillRect(16,18,14,8); });
-    this._tex('tile_grass', 32, 32, g => { g.fillStyle(0x2d5a1e); g.fillRect(0,0,32,32); g.fillStyle(0x3a6a28); g.fillRect(4,4,6,3); g.fillRect(18,14,8,4); g.fillRect(8,24,6,3); });
-    this._tex('tile_stone', 32, 32, g => { g.fillStyle(0x6b6b6b); g.fillRect(0,0,32,32); g.lineStyle(1,0x555555); g.strokeRect(0,0,16,16); g.strokeRect(16,0,16,16); g.strokeRect(8,16,16,16); });
+    // ── Isometric tile helpers ──
+    const TW = 64, TH = 48, TD = 24;
+    const hw = TW / 2, hh = TH / 2;
+    const diamond = (g, cx, cy, color, alpha = 1) => {
+      g.fillStyle(color, alpha); g.beginPath();
+      g.moveTo(cx, cy - hh); g.lineTo(cx + hw, cy); g.lineTo(cx, cy + hh); g.lineTo(cx - hw, cy);
+      g.closePath(); g.fillPath();
+    };
+    const diamondStroke = (g, cx, cy, color, width = 1, alpha = 1) => {
+      g.lineStyle(width, color, alpha); g.beginPath();
+      g.moveTo(cx, cy - hh); g.lineTo(cx + hw, cy); g.lineTo(cx, cy + hh); g.lineTo(cx - hw, cy);
+      g.closePath(); g.strokePath();
+    };
+    const dk = (c, f) => {
+      const r = Math.floor(((c>>16)&0xff)*f);
+      const gv = Math.floor(((c>>8)&0xff)*f);
+      const b = Math.floor((c&0xff)*f);
+      return (r<<16)|(gv<<8)|b;
+    };
 
-    // Walls — use AI-designed wall tile if creative assets provide one, else palette colors
+    // Floor tiles — isometric diamonds
+    this._tex('tile_floor', TW, TH, g => { diamond(g, hw, hh, 0x3d3225); diamondStroke(g, hw, hh, 0x342b1f, 1, 0.5); });
+    this._tex('tile_carpet', TW, TH, g => {
+      diamond(g, hw, hh, 0x4a1a2a);
+      g.lineStyle(1, 0xc9a84c, 0.15); g.beginPath();
+      g.moveTo(hw, hh-16); g.lineTo(hw+22, hh); g.lineTo(hw, hh+16); g.lineTo(hw-22, hh);
+      g.closePath(); g.strokePath();
+    });
+    this._tex('tile_metal', TW, TH, g => {
+      diamond(g, hw, hh, 0x3a3a3a); diamondStroke(g, hw, hh, 0x2e2e2e, 1, 0.5);
+      g.fillStyle(0x444444);
+      g.fillCircle(hw-12, hh-6, 1); g.fillCircle(hw+12, hh-6, 1);
+      g.fillCircle(hw-12, hh+6, 1); g.fillCircle(hw+12, hh+6, 1);
+    });
+    this._tex('tile_wood_deck', TW, TH, g => {
+      diamond(g, hw, hh, 0x5c4a32); diamondStroke(g, hw, hh, 0x4a3a22, 1, 0.5);
+      g.lineStyle(1, 0x4a3a22, 0.4);
+      for (let i = -2; i <= 2; i++) {
+        const oy = i * 8;
+        g.lineBetween(hw-20+Math.abs(i)*4, hh+oy, hw+20-Math.abs(i)*4, hh+oy);
+      }
+    });
+    this._tex('tile_carpet_blue', TW, TH, g => {
+      diamond(g, hw, hh, 0x1a2a4a);
+      g.lineStyle(1, 0xc9a84c, 0.15); g.beginPath();
+      g.moveTo(hw, hh-16); g.lineTo(hw+22, hh); g.lineTo(hw, hh+16); g.lineTo(hw-22, hh);
+      g.closePath(); g.strokePath();
+    });
+    this._tex('tile_carpet_red', TW, TH, g => {
+      diamond(g, hw, hh, 0x4a1a1a);
+      g.lineStyle(1, 0xc9a84c, 0.15); g.beginPath();
+      g.moveTo(hw, hh-16); g.lineTo(hw+22, hh); g.lineTo(hw, hh+16); g.lineTo(hw-22, hh);
+      g.closePath(); g.strokePath();
+    });
+    this._tex('tile_tile_white', TW, TH, g => {
+      diamond(g, hw, hh, 0xd8d8d0);
+      g.fillStyle(0xe4e4dc, 0.6); g.beginPath();
+      g.moveTo(hw, hh-12); g.lineTo(hw+16, hh); g.lineTo(hw, hh+12); g.lineTo(hw-16, hh);
+      g.closePath(); g.fillPath();
+      diamondStroke(g, hw, hh, 0xc0c0b8, 1, 0.5);
+    });
+    this._tex('tile_sand', TW, TH, g => { diamond(g, hw, hh, 0xc2b280); diamondStroke(g, hw, hh, 0xb8a870, 1, 0.3); });
+    this._tex('tile_ice', TW, TH, g => {
+      diamond(g, hw, hh, 0xb0d4e8);
+      g.fillStyle(0xc8e4f8, 0.4); g.beginPath();
+      g.moveTo(hw, hh-10); g.lineTo(hw+14, hh); g.lineTo(hw, hh+10); g.lineTo(hw-14, hh);
+      g.closePath(); g.fillPath();
+    });
+    this._tex('tile_grass', TW, TH, g => {
+      diamond(g, hw, hh, 0x2d5a1e); diamondStroke(g, hw, hh, 0x245018, 1, 0.3);
+      g.fillStyle(0x3a6a28, 0.5);
+      g.fillCircle(hw-8, hh-4, 2); g.fillCircle(hw+10, hh+2, 2); g.fillCircle(hw-2, hh+8, 2);
+    });
+    this._tex('tile_stone', TW, TH, g => {
+      diamond(g, hw, hh, 0x6b6b6b); diamondStroke(g, hw, hh, 0x555555, 1, 0.5);
+      g.lineStyle(1, 0x555555, 0.3);
+      g.lineBetween(hw-16, hh, hw+16, hh);
+      g.lineBetween(hw, hh-12, hw, hh+12);
+    });
+
+    // Walls — iso block with visible sides
     const ca = window._generatedWorld?.creativeAssets;
     if (ca?.wallTile?.draw?.length > 0) {
-      this._tex('tile_wall', 32, 32, g => this._execDraw(g, ca.wallTile.draw));
+      // AI-designed wall tile — render the draw ops directly (expected 64×72 iso block)
+      this._tex('tile_wall', TW, TH + TD, g => this._execDraw(g, ca.wallTile.draw));
     } else {
-      this._tex('tile_wall', 32, 32, g => {
-        g.fillStyle(wallCol); g.fillRect(0,0,32,32);
-        g.fillStyle(wallAcc); g.fillRect(2,2,28,12); g.fillRect(2,18,28,12);
+      this._tex('tile_wall', TW, TH + TD, g => {
+        const top = wallCol, left = dk(wallCol, 0.6), right = dk(wallCol, 0.8);
+        const cy = hh;
+        g.fillStyle(left); g.beginPath();
+        g.moveTo(0, cy); g.lineTo(hw, cy + hh); g.lineTo(hw, cy + hh + TD); g.lineTo(0, cy + TD);
+        g.closePath(); g.fillPath();
+        g.fillStyle(right); g.beginPath();
+        g.moveTo(TW, cy); g.lineTo(hw, cy + hh); g.lineTo(hw, cy + hh + TD); g.lineTo(TW, cy + TD);
+        g.closePath(); g.fillPath();
+        diamond(g, hw, cy, top);
+        // Accent lines on left face
+        g.lineStyle(1, dk(wallAcc, 0.7), 0.3);
+        g.lineBetween(4, cy + 8, hw - 4, cy + hh + 4);
+        g.lineBetween(4, cy + 16, hw - 4, cy + hh + 12);
       });
     }
   }
@@ -165,16 +282,99 @@ export default class RandomBootScene extends Phaser.Scene {
     };
     const p = palettes[style] || palettes.wooden;
 
-    // Default palette-based furniture (always available as fallback)
-    this._tex('furn_table', 48, 32, g => { g.fillStyle(p.pri); g.fillRect(4,4,40,24); g.fillStyle(p.sec); g.fillRect(6,6,36,20); });
-    this._tex('furn_desk', 64, 32, g => { g.fillStyle(p.pri); g.fillRect(0,4,64,24); g.fillStyle(p.acc); g.fillRect(2,8,60,18); });
-    this._tex('furn_bookshelf', 64, 32, g => {
-      g.fillStyle(p.acc); g.fillRect(0,0,64,32);
-      const c=[0x8B0000,0x00008B,0x006400,0x4B0082]; for(let i=0;i<8;i++){ g.fillStyle(c[i%4]); g.fillRect(4+i*7,4,6,12); g.fillRect(4+i*7,18,6,12); }
+    // ── Isometric furniture helpers ──
+    const dk = (c,f) => { const r=Math.floor(((c>>16)&0xff)*f); const gv=Math.floor(((c>>8)&0xff)*f); const b=Math.floor((c&0xff)*f); return (r<<16)|(gv<<8)|b; };
+    const isoBox = (g, cx, baseY, hw, hh, depth, topC, leftC, rightC) => {
+      const topY = baseY - depth;
+      const diamondY = topY - hh;
+      g.fillStyle(leftC); g.beginPath();
+      g.moveTo(cx-hw, topY); g.lineTo(cx, topY+hh); g.lineTo(cx, baseY+hh); g.lineTo(cx-hw, baseY);
+      g.closePath(); g.fillPath();
+      g.fillStyle(rightC); g.beginPath();
+      g.moveTo(cx+hw, topY); g.lineTo(cx, topY+hh); g.lineTo(cx, baseY+hh); g.lineTo(cx+hw, baseY);
+      g.closePath(); g.fillPath();
+      g.fillStyle(topC); g.beginPath();
+      g.moveTo(cx, diamondY); g.lineTo(cx+hw, topY); g.lineTo(cx, topY+hh); g.lineTo(cx-hw, topY);
+      g.closePath(); g.fillPath();
+      return { topY, diamondY };
+    };
+    const S = 0.75;
+    const rightFaceRect = (g, x, y, w, h, color, alpha) => {
+      g.fillStyle(color, alpha ?? 1); g.beginPath();
+      g.moveTo(x, y); g.lineTo(x+w, y - w*S); g.lineTo(x+w, y - w*S + h); g.lineTo(x, y+h);
+      g.closePath(); g.fillPath();
+    };
+    const leftFaceRect = (g, x, y, w, h, color, alpha) => {
+      g.fillStyle(color, alpha ?? 1); g.beginPath();
+      g.moveTo(x, y); g.lineTo(x-w, y - w*S); g.lineTo(x-w, y - w*S + h); g.lineTo(x, y+h);
+      g.closePath(); g.fillPath();
+    };
+    const topDiamond = (g, cx, cy, hw2, hh2, color, alpha) => {
+      g.fillStyle(color, alpha ?? 1); g.beginPath();
+      g.moveTo(cx, cy-hh2); g.lineTo(cx+hw2, cy); g.lineTo(cx, cy+hh2); g.lineTo(cx-hw2, cy);
+      g.closePath(); g.fillPath();
+    };
+
+    // Table — hw=20, hh=15, depth=4
+    this._tex('furn_table', 40, 44, g => {
+      const hw=20, hh=15, depth=4, cx=20, baseY=44-hh;
+      g.fillStyle(dk(p.pri,0.45));
+      g.fillRect(cx-hw+4, baseY+2, 2, 10);
+      g.fillRect(cx+hw-6, baseY, 2, 10);
+      g.fillRect(cx-1, baseY+hh-2, 2, 10);
+      isoBox(g, cx, baseY, hw, hh, depth, p.sec, dk(p.pri,0.55), dk(p.pri,0.75));
     });
-    this._tex('furn_plant', 24, 32, g => { g.fillStyle(p.pri); g.fillRect(4,16,16,14); g.fillStyle(0x228B22); g.fillRect(8,2,3,14); g.fillRect(4,0,6,6); g.fillRect(12,2,6,6); });
-    this._tex('furn_crate', 32, 32, g => { g.fillStyle(p.pri); g.fillRect(2,2,28,28); g.lineStyle(2,p.acc); g.strokeRect(4,4,24,24); g.beginPath(); g.moveTo(4,4); g.lineTo(28,28); g.strokePath(); });
-    this._tex('furn_cabinet', 48, 32, g => { g.fillStyle(p.pri); g.fillRect(2,0,44,32); g.fillStyle(p.sec); g.fillRect(4,2,18,28); g.fillRect(26,2,18,28); g.fillStyle(p.acc); g.fillCircle(20,16,2); g.fillCircle(28,16,2); });
+    // Desk — hw=24, hh=18, depth=10
+    this._tex('furn_desk', 48, 54, g => {
+      const hw=24, hh=18, depth=10, cx=24, baseY=54-hh;
+      g.fillStyle(dk(p.pri,0.4));
+      g.fillRect(cx-hw+2, baseY+2, 2, 8); g.fillRect(cx+hw-4, baseY-6, 2, 8);
+      const { topY, diamondY } = isoBox(g, cx, baseY, hw, hh, depth, p.pri, dk(p.pri,0.55), dk(p.pri,0.75));
+      topDiamond(g, cx-2, topY+4, 8, 6, 0xf5f0e0, 0.9);
+      const rFaceTop = topY + hh;
+      rightFaceRect(g, cx+2, rFaceTop+2, 14, 3, p.sec);
+    });
+    // Bookshelf — hw=24, hh=18, depth=24
+    this._tex('furn_bookshelf', 48, 60, g => {
+      const hw=24, hh=18, depth=24, cx=24, baseY=60-hh;
+      const { topY } = isoBox(g, cx, baseY, hw, hh, depth, p.acc, dk(p.acc,0.45), dk(p.acc,0.65));
+      const rFaceTop = topY + hh;
+      const lFaceTop = topY + hh;
+      const cols = [0x8B0000,0x00008B,0x006400,0x4B0082,0x800020,0xDAA520];
+      for (let row = 0; row < 3; row++) {
+        rightFaceRect(g, cx+2, rFaceTop + (row+1)*6, hw-4, 1, dk(p.acc,0.3));
+        leftFaceRect(g, cx-2, lFaceTop + (row+1)*6, hw-4, 1, dk(p.acc,0.3));
+        for (let i = 0; i < 3; i++) {
+          rightFaceRect(g, cx+2+i*6, rFaceTop+1+row*6, 5, 4, cols[(row*3+i) % cols.length]);
+          leftFaceRect(g, cx-2-i*6, lFaceTop+1+row*6, 5, 4, cols[(row*3+i+3) % cols.length]);
+        }
+      }
+    });
+    // Plant — hw=8, hh=6, depth=8
+    this._tex('furn_plant', 16, 36, g => {
+      const hw=8, hh=6, depth=8, cx=8, baseY=36-hh;
+      isoBox(g, cx, baseY, hw, hh, depth, p.pri, dk(p.pri,0.6), dk(p.pri,0.8));
+      g.fillStyle(0x1a6a1a); g.fillCircle(cx, 12, 8);
+      g.fillStyle(0x228B22); g.fillCircle(cx-3, 9, 5);
+      g.fillStyle(0x2a9a2a); g.fillCircle(cx+3, 8, 4);
+    });
+    // Crate — hw=12, hh=9, depth=10
+    this._tex('furn_crate', 24, 30, g => {
+      const hw=12, hh=9, depth=10, cx=12, baseY=30-hh;
+      const { topY } = isoBox(g, cx, baseY, hw, hh, depth, p.pri, dk(p.pri,0.5), dk(p.pri,0.7));
+      const rFaceTop = topY + hh;
+      rightFaceRect(g, cx+1, rFaceTop+1, 8, 1, dk(p.acc,0.8));
+      rightFaceRect(g, cx+1, rFaceTop+5, 8, 1, dk(p.acc,0.8));
+    });
+    // Cabinet — hw=20, hh=15, depth=16
+    this._tex('furn_cabinet', 40, 46, g => {
+      const hw=20, hh=15, depth=16, cx=20, baseY=46-hh;
+      const { topY } = isoBox(g, cx, baseY, hw, hh, depth, p.pri, dk(p.pri,0.5), dk(p.pri,0.7));
+      const rFaceTop = topY + hh;
+      rightFaceRect(g, cx+2, rFaceTop+2, 7, 10, p.sec);
+      rightFaceRect(g, cx+10, rFaceTop+1, 7, 10, p.sec);
+      g.fillStyle(p.acc); g.fillCircle(cx+8, rFaceTop+7, 1); g.fillCircle(cx+16, rFaceTop+5, 1);
+    });
 
     // AI-designed setting-specific furniture
     const ca = window._generatedWorld?.creativeAssets;
@@ -277,6 +477,11 @@ export default class RandomBootScene extends Phaser.Scene {
     if (typeof scaled.y2 === 'number') scaled.y2 = Math.round(scaled.y2 * s);
     if (typeof scaled.x3 === 'number') scaled.x3 = Math.round(scaled.x3 * s);
     if (typeof scaled.y3 === 'number') scaled.y3 = Math.round(scaled.y3 * s);
+    if (typeof scaled.cx === 'number') scaled.cx = Math.round(scaled.cx * s);
+    if (typeof scaled.cy === 'number') scaled.cy = Math.round(scaled.cy * s);
+    if (typeof scaled.hw === 'number') scaled.hw = Math.round(scaled.hw * s);
+    if (typeof scaled.hh === 'number') scaled.hh = Math.round(scaled.hh * s);
+    if (Array.isArray(scaled.points)) scaled.points = scaled.points.map(v => Math.round(v * s));
     return scaled;
   }
 
@@ -425,6 +630,24 @@ export default class RandomBootScene extends Phaser.Scene {
         case 'ellipse':  g.fillStyle(c, a); g.fillEllipse(op.x, op.y, op.w, op.h); break;
         case 'arc':      g.lineStyle(op.width || 1, c, a); g.beginPath(); g.arc(op.x, op.y, op.r, op.start || 0, op.end || Math.PI * 2, false); g.strokePath(); break;
         case 'roundRect': g.fillStyle(c, a); g.fillRoundedRect(op.x, op.y, op.w, op.h, op.r || 4); break;
+        case 'diamond': {
+          const dhw = op.hw || 16, dhh = op.hh || 12;
+          g.fillStyle(c, a); g.beginPath();
+          g.moveTo(op.cx, op.cy - dhh); g.lineTo(op.cx + dhw, op.cy);
+          g.lineTo(op.cx, op.cy + dhh); g.lineTo(op.cx - dhw, op.cy);
+          g.closePath(); g.fillPath();
+          break;
+        }
+        case 'poly': {
+          const pts = op.points;
+          if (Array.isArray(pts) && pts.length >= 6) {
+            g.fillStyle(c, a); g.beginPath();
+            g.moveTo(pts[0], pts[1]);
+            for (let pi = 2; pi < pts.length; pi += 2) g.lineTo(pts[pi], pts[pi+1]);
+            g.closePath(); g.fillPath();
+          }
+          break;
+        }
       }
     }
   }
@@ -537,44 +760,104 @@ export default class RandomBootScene extends Phaser.Scene {
   }
 
   _genStairs() {
-    // Only generate stair textures if the world has multi-floor support
     const world = window._generatedWorld;
     if (!world?.multiFloor) return;
 
-    // Staircase tile going up (for ground floor)
-    this._tex('tile_stairs', 32, 32, (g) => {
-      g.fillStyle(0x5c3a1e); g.fillRect(0,0,32,32);
-      g.fillStyle(0x4a2e16);
-      for (let i = 0; i < 5; i++) {
-        g.fillRect(0, i * 6 + 2, 32, 4);
-        g.fillStyle(0x6b4423); g.fillRect(0, i * 6, 32, 2);
-        g.fillStyle(0x4a2e16);
+    const TW = 64, TH = 48, hw = TW/2, hh = TH/2;
+
+    const xAtY = (y) => {
+      let left, right;
+      if (y <= hh) { left = hw - (y / hh) * hw; right = hw + (y / hh) * hw; }
+      else { const t = (y - hh) / hh; left = t * hw; right = TW - t * hw; }
+      return { left, right };
+    };
+
+    // Stairs going UP — flat treads ascending from front to back inside a diamond tile
+    this._tex('tile_stairs', TW, TH, g => {
+      g.fillStyle(0x3a2510); g.beginPath();
+      g.moveTo(hw, 0); g.lineTo(TW, hh); g.lineTo(hw, TH); g.lineTo(0, hh);
+      g.closePath(); g.fillPath();
+
+      const numSteps = 6;
+      const stepH = TH / numSteps;
+      const treadColors = [0x6b4c2a, 0x7a5a35, 0x8b6b42, 0x7a5a35, 0x6b4c2a, 0x8b6b42];
+      const riserColor = 0x4a2e16;
+
+      for (let i = 0; i < numSteps; i++) {
+        const y0 = TH - (i + 1) * stepH;
+        const y1 = TH - i * stepH;
+        const riserH = 2;
+        const top = xAtY(y0), bot = xAtY(y1);
+
+        g.fillStyle(treadColors[i % treadColors.length]); g.beginPath();
+        g.moveTo(top.left, y0); g.lineTo(top.right, y0);
+        g.lineTo(bot.right, y1); g.lineTo(bot.left, y1);
+        g.closePath(); g.fillPath();
+
+        g.fillStyle(riserColor); g.beginPath();
+        g.moveTo(bot.left, y1 - riserH); g.lineTo(bot.right, y1 - riserH);
+        g.lineTo(bot.right, y1); g.lineTo(bot.left, y1);
+        g.closePath(); g.fillPath();
+
+        g.lineStyle(1, 0xaa8855, 0.6);
+        g.lineBetween(top.left + 1, y0, top.right - 1, y0);
       }
-      g.fillStyle(0xc9a84c, 0.7);
-      g.fillTriangle(16, 4, 10, 14, 22, 14);
-      g.fillRect(13, 14, 6, 8);
+
+      g.lineStyle(1, 0x2a1a0a, 0.5); g.beginPath();
+      g.moveTo(hw, 0); g.lineTo(TW, hh); g.lineTo(hw, TH); g.lineTo(0, hh);
+      g.closePath(); g.strokePath();
+
+      g.fillStyle(0xc9a84c, 0.55);
+      g.fillTriangle(hw, 6, hw - 5, 14, hw + 5, 14);
     });
 
-    // Staircase tile going down (for upper floor)
-    this._tex('tile_stairs_down', 32, 32, (g) => {
-      g.fillStyle(0x5c3a1e); g.fillRect(0,0,32,32);
-      g.fillStyle(0x4a2e16);
-      for (let i = 0; i < 5; i++) {
-        g.fillRect(0, i * 6 + 2, 32, 4);
-        g.fillStyle(0x6b4423); g.fillRect(0, i * 6, 32, 2);
-        g.fillStyle(0x4a2e16);
+    // Stairs going DOWN — same treads but descending order
+    this._tex('tile_stairs_down', TW, TH, g => {
+      g.fillStyle(0x302010); g.beginPath();
+      g.moveTo(hw, 0); g.lineTo(TW, hh); g.lineTo(hw, TH); g.lineTo(0, hh);
+      g.closePath(); g.fillPath();
+
+      const numSteps = 6;
+      const stepH = TH / numSteps;
+      const treadColors = [0x8b6b42, 0x6b4c2a, 0x7a5a35, 0x8b6b42, 0x6b4c2a, 0x7a5a35];
+      const riserColor = 0x4a2e16;
+
+      for (let i = 0; i < numSteps; i++) {
+        const y0 = i * stepH;
+        const y1 = (i + 1) * stepH;
+        const riserH = 2;
+        const top = xAtY(y0), bot = xAtY(y1);
+
+        g.fillStyle(treadColors[i % treadColors.length]); g.beginPath();
+        g.moveTo(top.left, y0); g.lineTo(top.right, y0);
+        g.lineTo(bot.right, y1); g.lineTo(bot.left, y1);
+        g.closePath(); g.fillPath();
+
+        g.fillStyle(riserColor); g.beginPath();
+        g.moveTo(top.left, y0); g.lineTo(top.right, y0);
+        g.lineTo(top.right, y0 + riserH); g.lineTo(top.left, y0 + riserH);
+        g.closePath(); g.fillPath();
+
+        g.lineStyle(1, 0xaa8855, 0.4);
+        g.lineBetween(bot.left + 1, y1, bot.right - 1, y1);
       }
-      g.fillStyle(0xc9a84c, 0.7);
-      g.fillTriangle(16, 28, 10, 18, 22, 18);
-      g.fillRect(13, 10, 6, 8);
+
+      g.lineStyle(1, 0x2a1a0a, 0.5); g.beginPath();
+      g.moveTo(hw, 0); g.lineTo(TW, hh); g.lineTo(hw, TH); g.lineTo(0, hh);
+      g.closePath(); g.strokePath();
+
+      g.fillStyle(0xc9a84c, 0.55);
+      g.fillTriangle(hw, 42, hw - 5, 34, hw + 5, 34);
     });
 
-    // Upper floor tile (slightly different shade)
-    this._tex('tile_upper_floor', 32, 32, (g) => {
-      g.fillStyle(0x3a2e22); g.fillRect(0,0,32,32);
-      g.lineStyle(1, 0x302518); g.strokeRect(0,0,32,32);
-      g.lineStyle(1, 0x322a1e);
-      for(let i=0;i<5;i++){ g.beginPath(); g.moveTo(0,6+i*6); g.lineTo(32,6+i*6); g.strokePath(); }
+    // Upper floor tile — iso diamond
+    this._tex('tile_upper_floor', TW, TH, g => {
+      g.fillStyle(0x3a2e22); g.beginPath();
+      g.moveTo(hw, 0); g.lineTo(TW, hh); g.lineTo(hw, TH); g.lineTo(0, hh);
+      g.closePath(); g.fillPath();
+      g.lineStyle(1, 0x302518, 0.5); g.beginPath();
+      g.moveTo(hw, 0); g.lineTo(TW, hh); g.lineTo(hw, TH); g.lineTo(0, hh);
+      g.closePath(); g.strokePath();
     });
   }
 

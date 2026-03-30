@@ -25,7 +25,9 @@ export type DrawOp =
   | { op: 'stroke';    color: string; x: number; y: number; w: number; h: number; width: number; alpha?: number }
   | { op: 'ellipse';   color: string; x: number; y: number; w: number; h: number; alpha?: number }
   | { op: 'arc';       color: string; x: number; y: number; r: number; start: number; end: number; width: number; alpha?: number }
-  | { op: 'roundRect'; color: string; x: number; y: number; w: number; h: number; r: number; alpha?: number };
+  | { op: 'roundRect'; color: string; x: number; y: number; w: number; h: number; r: number; alpha?: number }
+  | { op: 'diamond';   color: string; cx: number; cy: number; hw: number; hh: number; alpha?: number }
+  | { op: 'poly';      color: string; points: number[]; alpha?: number };
 
 // ── Asset interfaces ─────────────────────────────────────────────
 
@@ -129,9 +131,9 @@ export interface CreativeAssets {
     tintAlpha: number;  // 0.0-0.15
   }>;
 
-  /** Custom wall tile drawing (32×32 px). */
+  /** Custom wall tile drawing (64×72 px isometric block). */
   wallTile: {
-    draw: DrawOp[];   // 32×32 wall tile instructions
+    draw: DrawOp[];   // 64×72 iso wall block instructions
   };
 
   /** Unique sprite per evidence item (16×16 each). */
@@ -167,7 +169,7 @@ interface CreativePromptInput {
   visual?: { wallColor: string; wallAccent: string; accentColor: string; furnitureStyle: string };
 }
 
-const PRIMITIVES_HELP = `You have 8 drawing primitives on a pixel canvas:
+const PRIMITIVES_HELP = `You have 10 drawing primitives on a pixel canvas:
   fill — filled rect  {"op":"fill","color":"#hex","x":0,"y":0,"w":10,"h":10}
   circle — filled circle {"op":"circle","color":"#hex","x":5,"y":5,"r":4}
   line — segment {"op":"line","color":"#hex","x1":0,"y1":0,"x2":10,"y2":10,"width":1}
@@ -176,7 +178,26 @@ const PRIMITIVES_HELP = `You have 8 drawing primitives on a pixel canvas:
   ellipse — filled ellipse {"op":"ellipse","color":"#hex","x":16,"y":16,"w":20,"h":12}
   arc — stroked arc {"op":"arc","color":"#hex","x":16,"y":16,"r":10,"start":0,"end":3.14,"width":2}
   roundRect — rounded rect {"op":"roundRect","color":"#hex","x":2,"y":2,"w":28,"h":28,"r":4}
-All ops accept optional "alpha" (0.0-1.0). Arc angles in radians.`;
+  diamond — isometric diamond {"op":"diamond","color":"#hex","cx":24,"cy":12,"hw":20,"hh":15}
+  poly — filled polygon {"op":"poly","color":"#hex","points":[x1,y1,x2,y2,x3,y3,x4,y4]}
+All ops accept optional "alpha" (0.0-1.0). Arc angles in radians.
+
+IMPORTANT — ISOMETRIC STYLE:
+This game uses isometric 2.5D rendering. ALL objects must look like 3D isometric shapes:
+- Top face = diamond (flat surface seen from above)
+- Left face = darker parallelogram (shadow side)
+- Right face = slightly lighter parallelogram
+- Standard iso slope: for every pixel right, go UP 0.75 pixels (hh/hw ratio = 3:4)
+- Use "diamond" op for top surfaces, "poly" op for left/right side faces
+- Use "tri" for iso-aligned triangular details
+
+ISOMETRIC BOX pattern (the fundamental building block):
+Given center cx, base Y at baseY, half-widths hw/hh (4:3 ratio), depth d:
+  Top diamond: {"op":"diamond","color":"LIGHTEST","cx":cx,"cy":baseY-d-hh,"hw":hw,"hh":hh}
+  Left face:   {"op":"poly","color":"DARKEST","points":[cx-hw,baseY-d, cx,baseY-d+hh, cx,baseY+hh, cx-hw,baseY]}
+  Right face:  {"op":"poly","color":"MEDIUM","points":[cx+hw,baseY-d, cx,baseY-d+hh, cx,baseY+hh, cx+hw,baseY]}
+
+NEVER use flat rectangles for furniture/decorations. Always use diamond+poly for the iso look.`;
 
 /**
  * Prompt 1 of 3: Environment atmosphere (wall tile, particles, room ambiance, weather).
@@ -184,7 +205,7 @@ All ops accept optional "alpha" (0.0-1.0). Arc angles in radians.`;
 export function buildEnvironmentPrompt(skeleton: CreativePromptInput): string {
   const roomList = skeleton.rooms.map(r => `- ${r.id}: "${r.name}"`).join('\n');
 
-  return `You are a VISUAL ARTIST for a top-down 2D pixel-art mystery game.
+  return `You are a VISUAL ARTIST for an ISOMETRIC 2.5D pixel-art mystery game.
 Setting: "${skeleton.setting}" | Theme: ${skeleton.settingTheme} | Weather: ${skeleton.weather || 'clear'}
 Palette — wall: ${skeleton.visual?.wallColor || '#2d1117'}, accent: ${skeleton.visual?.accentColor || '#c9a84c'}
 
@@ -202,10 +223,10 @@ Output MINIFIED JSON (no extra whitespace) with ALL 4 sections:
 }
 
 RULES:
-- Wall tile: 32×32. Reflects building material (brick, stone, marble, wood, metal, etc). Use roundRect/ellipse/arc for RICH textures — mortar lines, grain patterns, weathering. 4-8 draw ops. Make it beautiful and detailed.
-- Particles: Atmospheric effect matching setting — embers for fire, mist for docks, pollen for gardens, dust for cellars, sparks for workshops. Choose thoughtfully.
-- Room ambiance: EVERY room gets a unique tint. tintAlpha 0.03-0.12. Darker for cellars/closets, warmer for kitchens, cooler for labs, eerie for crime scenes.
-- Weather: particle texture ≤16×16 matching "${skeleton.weather || 'clear'}". Rain=streaks, snow=flakes, fog=blobs, clear=subtle dust motes. Config should feel natural.
+- Wall tile: 64×72 ISOMETRIC BLOCK. The wall is a 3D block with a diamond top face at (32, 24) with hw=32/hh=24 and left+right side faces extending 24px down. Use poly for side faces (darker shading) and diamond for the top. Add texture detail (mortar lines, grain, weathering) using tri/line ON the iso faces. 5-10 draw ops.
+- Particles: Atmospheric effect matching setting. Choose thoughtfully.
+- Room ambiance: EVERY room gets a unique tint. tintAlpha 0.03-0.12.
+- Weather: particle texture ≤16×16 matching "${skeleton.weather || 'clear'}". Config should feel natural.
 - All colors: 6-digit hex. Output ONLY minified JSON.`;
 }
 
@@ -216,7 +237,7 @@ RULES:
 export function buildPropsPrompt(skeleton: CreativePromptInput): string {
   const roomList = skeleton.rooms.map(r => `- ${r.id}: "${r.name}"`).join('\n');
 
-  return `You are the PROPS DEPARTMENT for a top-down 2D pixel-art mystery game. Your job is to fill every room with immersive, setting-specific objects that make the world feel alive and real.
+  return `You are the PROPS DEPARTMENT for an ISOMETRIC 2.5D pixel-art mystery game. Your job is to fill every room with immersive, setting-specific objects that look like 3D isometric shapes — NOT flat top-down sprites.
 Setting: "${skeleton.setting}" | Theme: ${skeleton.settingTheme}
 Palette — wall: ${skeleton.visual?.wallColor || '#2d1117'}, accent: ${skeleton.visual?.accentColor || '#c9a84c'}, furniture style: ${skeleton.visual?.furnitureStyle || 'wooden'}
 
@@ -227,33 +248,35 @@ ${PRIMITIVES_HELP}
 
 Output MINIFIED JSON (no extra whitespace) with ALL 3 sections:
 {
-  "decorations":[{"roomId":"id","items":[{"name":"N","width":32,"height":32,"draw":[...]}]}],
-  "furniture":[{"name":"N","width":48,"height":32,"draw":[...]}],
+  "decorations":[{"roomId":"id","items":[{"name":"N","width":48,"height":54,"draw":[...]}]}],
+  "furniture":[{"name":"N","width":48,"height":54,"draw":[...]}],
   "ambientProps":[{"name":"N","width":12,"height":12,"count":4,"draw":[...]}]
 }
 
 RULES:
-- Decorations: 2-3 per room. 24-48px. 5-10 draw ops each. These are the showpiece objects that define each room's identity:
-  * Think about what SPECIFIC objects belong in each room based on its purpose AND the setting
-  * A winery cellar gets barrels, corkscrews, tasting glasses. A ship's bridge gets navigation charts, compass, spyglass.
-  * Use layered colors, highlights, shadows, and alpha for depth. Combine primitives creatively.
-  * Each item must be UNIQUE (but one unique designed item can be placed multiple timestimes) and recognisable from a top-down view. NO generic boxes or squares.
+- ALL decorations and furniture MUST be drawn as ISOMETRIC 3D BOXES using the iso box pattern:
+  1. Draw left face (darkest color) as a "poly" with 4 points
+  2. Draw right face (medium color) as a "poly" with 4 points
+  3. Draw top face (lightest color) as a "diamond" centered above the box
+  4. Add details ON the iso faces using poly/tri/line (NOT flat fill rects)
+  * hw:hh ratio must be 4:3 (e.g. hw=20,hh=15 or hw=24,hh=18)
+  * Canvas height = 2*hh + depth + margin. Canvas width = 2*hw.
+  * The base diamond bottom vertex should be near the canvas bottom edge.
+
+- Decorations: 2-3 per room. Canvas 32-48px wide, height varies. 6-12 draw ops each:
+  * Think about what SPECIFIC objects belong in each room based on purpose AND setting
+  * A winery cellar gets barrel iso-boxes, a ship bridge gets console iso-boxes
+  * Each item must look like a recognisable 3D object from the isometric viewpoint
   * roomId MUST exactly match the room IDs listed above.
 
-- Furniture: 5-8 setting-specific pieces. 32-64px. 6-12 draw ops each. These are reusable items placed across rooms and multiple items if that makes the immersive experience better (e.g. multiple lab benches, several wine glasses, a dining table with multiple chairs, multiple server racks in a server room, etc). They should be iconic and evocative of the setting:
-  * NOT generic tables and chairs. Design for the SPECIFIC setting: lab benches, wine racks, ship wheels, forge anvils, display cases, altar tables, operating tables, workbenches, etc.
-  * Use multiple primitives to create recognisable silhouettes — legs, surfaces, details, hardware.
-  * Include at least 2 seating items and 2 surface/storage items appropriate to the setting.
-  * Vary sizes: some compact (32×32), some large (64×48).
+- Furniture: 5-8 setting-specific pieces. Canvas 40-56px wide. 8-14 draw ops each:
+  * Build each piece as an iso box base + details. E.g. a desk = iso box body + diamond paper on top + poly drawer on right face
+  * Include at least 2 seating items and 2 surface/storage items appropriate to the setting
+  * Vary sizes: some compact (hw=12), some large (hw=24)
 
-- Ambient props: 3-5 types. 8-16px each. 2-5 draw ops. Small scattered details:
-  * Setting debris: corks, broken glass, sawdust, fallen leaves, spilled powder, scattered coins, shell casings, crushed petals, wood shavings.
-  * Each type has count 3-6 for random scattering.
-  * These add atmosphere — choose items that tell a story about the setting.
+- Ambient props: 3-5 types. 8-16px each. 2-5 draw ops. Small scattered details (can be flat — they're tiny)
 
-- All colors: 6-digit hex. Use alpha (0.0-1.0) for glass, liquids, shadows, translucent materials.
-- Be CREATIVE and DETAILED. You have full token budget — use it for rich, immersive art.
-- Output ONLY minified JSON.`;
+- All colors: 6-digit hex. Use alpha (0.0-1.0) for glass, liquids, shadows. Output ONLY minified JSON.`;
 }
 
 /**
@@ -271,7 +294,7 @@ export function buildCharacterAssetsPrompt(skeleton: CreativePromptInput): strin
   const charList = skeleton.characters.map(c => `- ${c.id}: "${c.name}" (${c.role})`).join('\n');
   const evList = skeleton.evidence.map(e => `- ${e.id}: "${e.name}" — ${e.description}`).join('\n');
 
-  return `You are a VISUAL ARTIST for a top-down 2D pixel-art mystery game.
+  return `You are a VISUAL ARTIST for an ISOMETRIC 2.5D pixel-art mystery game.
 Setting: "${skeleton.setting}" | Crime: ${skeleton.crime}
 
 CHARACTERS:
@@ -338,17 +361,20 @@ export function getDefaultCreativeAssets(rooms: { id: string; name: string }[], 
     ])),
     wallTile: {
       draw: [
-        { op: 'fill' as const, color: '#2d1117', x: 0, y: 0, w: 32, h: 32 },
-        { op: 'fill' as const, color: '#3a1520', x: 2, y: 2, w: 28, h: 12 },
-        { op: 'fill' as const, color: '#3a1520', x: 2, y: 18, w: 28, h: 12 },
+        { op: 'poly' as const, color: '#1a0a0e', points: [0, 24, 32, 48, 32, 72, 0, 48] },
+        { op: 'poly' as const, color: '#250f14', points: [64, 24, 32, 48, 32, 72, 64, 48] },
+        { op: 'diamond' as const, color: '#2d1117', cx: 32, cy: 24, hw: 32, hh: 24 },
       ],
     },
     furniture: [{
       name: 'Generic Table',
-      width: 48, height: 32,
+      width: 40, height: 44,
       draw: [
-        { op: 'fill' as const, color: '#5c3a1e', x: 4, y: 4, w: 40, h: 24 },
-        { op: 'fill' as const, color: '#6b4423', x: 6, y: 6, w: 36, h: 20 },
+        { op: 'fill' as const, color: '#3a2510', x: 6, y: 31, w: 2, h: 10 },
+        { op: 'fill' as const, color: '#3a2510', x: 32, y: 27, w: 2, h: 10 },
+        { op: 'poly' as const, color: '#3a2510', points: [0, 25, 20, 40, 20, 44, 0, 29] },
+        { op: 'poly' as const, color: '#4a3218', points: [40, 25, 20, 40, 20, 44, 40, 29] },
+        { op: 'diamond' as const, color: '#6b4423', cx: 20, cy: 25, hw: 20, hh: 15 },
       ],
     }],
     evidenceSprites: (evidence || []).map(e => ({
