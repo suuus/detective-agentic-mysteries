@@ -209,37 +209,195 @@ export default class RandomBootScene extends Phaser.Scene {
       { body: 0x2d2d2d, hair: 0xaaaaaa }, { body: 0x800020, hair: 0xDDDD00 },
       { body: 0x2a4a2a, hair: 0x1a1a1a }, { body: 0x4a4a4a, hair: 0x6b4423 },
     ];
+    const hairStyles = ['updo','receding','long','slicked','bun'];
+    const builds = ['slim','broad','stout'];
+    const moods = ['neutral','angry','nervous','friendly'];
+
     world.characters.forEach((char, i) => {
       const bodyCol = char.spriteColors ? this._hex(char.spriteColors.body) : fallback[i % fallback.length].body;
       const hairCol = char.spriteColors ? this._hex(char.spriteColors.hair) : fallback[i % fallback.length].hair;
       const costume = costumeLookup[char.id];
-      this._tex('npc_' + char.id, 32, 32, g => {
-        const cx=16, cy=16;
-        // Base body (torso, skin, hair, legs — but NOT eyes yet)
-        g.fillStyle(bodyCol); g.fillRect(cx-6,cy-2,12,14);
-        g.fillStyle(0xe8c99b); g.fillRect(cx-5,cy-10,10,9);
-        g.fillStyle(hairCol); g.fillRect(cx-5,cy-13,10,5);
-        g.fillStyle(0x2a2a2a); g.fillRect(cx-4,cy+12,3,4); g.fillRect(cx+1,cy+12,3,4);
-        // AI costume overlay — clamp to avoid obliterating the face/body
-        if (costume) this._execCostume(g, costume);
-        // Eyes drawn LAST so they're always visible on top of costume
-        g.fillStyle(0x222222); g.fillRect(cx-3,cy-6,2,2); g.fillRect(cx+1,cy-6,2,2);
-      });
+      const npcDef = {
+        skin: 0xe8c99b, body: bodyCol, hair: hairCol,
+        accent: bodyCol, hairStyle: hairStyles[i % hairStyles.length],
+        build: builds[i % builds.length], accessory: null,
+      };
+      const S = 48;
+
+      // Generate 4 mood variant sprites
+      for (const mood of moods) {
+        const texKey = mood === 'neutral' ? `npc_${char.id}` : `npc_${char.id}_${mood}`;
+        this._tex(texKey, S, S, g => {
+          this._drawNPCSprite(g, S, npcDef, mood);
+          // Apply AI costume overlay on top (scaled from 32 to 48)
+          if (costume) {
+            const scaled = costume.map(op => this._scaleCostumeOp(op, 32, S));
+            this._execCostume(g, scaled, S);
+          }
+          // Re-draw face features on top so costume doesn't cover them
+          const cx = S / 2, cy = S / 2;
+          const postureY = mood === 'nervous' ? 1 : mood === 'angry' ? -1 : 0;
+          // Neck + head
+          g.fillStyle(npcDef.skin); g.fillRect(cx - 4, cy - 4 + postureY, 8, 6);
+          g.fillCircle(cx, cy - 12 + postureY, 9);
+          // Eye whites + pupils
+          const eyeY = cy - 12 + postureY;
+          g.fillStyle(0xffffff); g.fillRect(cx-6,eyeY-1,4,3); g.fillRect(cx+2,eyeY-1,4,3);
+          g.fillStyle(0x222222); g.fillRect(cx-5,eyeY,2,2); g.fillRect(cx+3,eyeY,2,2);
+          // Mouth
+          const mouthY = cy - 7 + postureY;
+          g.fillStyle(0x993333); g.fillRect(cx-2,mouthY,4,1);
+        });
+      }
+
+      // Generate portrait textures
+      const PW = 128, PH = 160;
+      for (const mood of moods) {
+        const pKey = mood === 'neutral' ? `portrait_${char.id}` : `portrait_${char.id}_${mood}`;
+        this._tex(pKey, PW, PH, g => {
+          this._drawPortrait(g, PW, PH, npcDef, mood);
+        });
+      }
     });
+  }
+
+  /** Scale a costume draw op from original size to new size */
+  _scaleCostumeOp(op, from, to) {
+    if (!op) return op;
+    const s = to / from;
+    const scaled = { ...op };
+    if (typeof scaled.x === 'number') scaled.x = Math.round(scaled.x * s);
+    if (typeof scaled.y === 'number') scaled.y = Math.round(scaled.y * s);
+    if (typeof scaled.w === 'number') scaled.w = Math.round(scaled.w * s);
+    if (typeof scaled.h === 'number') scaled.h = Math.round(scaled.h * s);
+    if (typeof scaled.r === 'number') scaled.r = Math.round(scaled.r * s);
+    if (typeof scaled.x1 === 'number') scaled.x1 = Math.round(scaled.x1 * s);
+    if (typeof scaled.y1 === 'number') scaled.y1 = Math.round(scaled.y1 * s);
+    if (typeof scaled.x2 === 'number') scaled.x2 = Math.round(scaled.x2 * s);
+    if (typeof scaled.y2 === 'number') scaled.y2 = Math.round(scaled.y2 * s);
+    if (typeof scaled.x3 === 'number') scaled.x3 = Math.round(scaled.x3 * s);
+    if (typeof scaled.y3 === 'number') scaled.y3 = Math.round(scaled.y3 * s);
+    return scaled;
+  }
+
+  /** Draw a detailed NPC sprite — shared with BootScene pattern */
+  _drawNPCSprite(g, S, npc, mood) {
+    const cx = S / 2, cy = S / 2;
+    const isSlim = npc.build === 'slim';
+    const isBroad = npc.build === 'broad';
+    const postureY = mood === 'nervous' ? 1 : mood === 'angry' ? -1 : 0;
+    const shoulderOff = mood === 'nervous' ? 1 : mood === 'angry' ? -1 : 0;
+
+    const bw = isSlim ? 14 : isBroad ? 18 : 16;
+    const bh = 16;
+    const bx = cx - bw / 2;
+    const by = cy - 2 + postureY;
+    g.fillStyle(npc.body); g.fillRect(bx, by, bw, bh);
+    g.fillRect(bx - 2, by + shoulderOff, bw + 4, 4);
+    g.fillStyle(npc.accent || npc.body);
+    g.fillTriangle(cx - 2, by, cx, by + 5, cx + 2, by);
+    // Neck (connects head to body)
+    g.fillStyle(npc.skin); g.fillRect(cx - 4, cy - 4 + postureY, 8, 6);
+    // Head
+    g.fillCircle(cx, cy - 12 + postureY, 9);
+
+    g.fillStyle(npc.hair);
+    switch (npc.hairStyle) {
+      case 'updo': g.fillRect(cx-8,cy-22+postureY,16,6); g.fillCircle(cx,cy-22+postureY,5); g.fillRect(cx-9,cy-18+postureY,18,3); break;
+      case 'receding': g.fillRect(cx-7,cy-20+postureY,14,4); g.fillRect(cx+4,cy-18+postureY,5,4); g.fillRect(cx-9,cy-18+postureY,5,4); break;
+      case 'long': g.fillRect(cx-9,cy-20+postureY,18,6); g.fillRect(cx-10,cy-16+postureY,4,14); g.fillRect(cx+6,cy-16+postureY,4,14); break;
+      case 'slicked': g.fillRect(cx-8,cy-20+postureY,16,5); g.fillRect(cx-8,cy-17+postureY,16,2); break;
+      case 'bun': g.fillRect(cx-7,cy-20+postureY,14,5); g.fillCircle(cx,cy-21+postureY,4); break;
+      default: g.fillRect(cx-8,cy-20+postureY,16,5);
+    }
+
+    const eyeY = cy - 12 + postureY;
+    g.fillStyle(0xffffff); g.fillRect(cx-6,eyeY-1,4,3); g.fillRect(cx+2,eyeY-1,4,3);
+    g.fillStyle(0x222222); g.fillRect(cx-5,eyeY,2,2); g.fillRect(cx+3,eyeY,2,2);
+
+    g.fillStyle(npc.hair, 0.8);
+    if (mood === 'angry') { g.fillRect(cx-6,eyeY-4,4,1); g.fillRect(cx+2,eyeY-4,4,1); }
+    else if (mood === 'nervous') { g.fillRect(cx-6,eyeY-5,4,1); g.fillRect(cx+2,eyeY-4,4,1); }
+    else { g.fillRect(cx-6,eyeY-3,4,1); g.fillRect(cx+2,eyeY-3,4,1); }
+
+    const mouthY = cy - 7 + postureY;
+    g.fillStyle(0x993333);
+    if (mood === 'angry') { g.fillRect(cx-2,mouthY+1,4,1); }
+    else if (mood === 'nervous') { g.fillRect(cx-2,mouthY,4,2); }
+    else if (mood === 'friendly') { g.fillRect(cx-3,mouthY,6,1); g.fillRect(cx-2,mouthY+1,4,1); }
+    else { g.fillRect(cx-2,mouthY,4,1); }
+
+    g.fillStyle(0x2a2a2a); g.fillRect(cx-5,cy+14+postureY,4,6); g.fillRect(cx+1,cy+14+postureY,4,6);
+    g.fillStyle(0x1a1a1a); g.fillRect(cx-6,cy+19+postureY,5,2); g.fillRect(cx+1,cy+19+postureY,5,2);
+    g.fillStyle(npc.body, 0.9); g.fillRect(bx-3,by+2,3,12); g.fillRect(bx+bw,by+2,3,12);
+  }
+
+  /** Draw a portrait bust — shared with BootScene pattern */
+  _drawPortrait(g, W, H, npc, mood) {
+    const cx = W / 2, cy = H / 2 - 10;
+    const bgR = (npc.body >> 16) & 0xff, bgG = (npc.body >> 8) & 0xff, bgB = npc.body & 0xff;
+    g.fillStyle(Phaser.Display.Color.GetColor(Math.floor(bgR*0.3), Math.floor(bgG*0.3), Math.floor(bgB*0.3)));
+    g.fillRect(0, 0, W, H);
+    g.fillStyle(0x000000, 0.3); g.fillRect(0,0,8,H); g.fillRect(W-8,0,8,H);
+
+    const tiltX = mood === 'nervous' ? 3 : mood === 'angry' ? -2 : 0;
+    const headCx = cx + tiltX;
+    const bodyTop = cy + 30;
+    g.fillStyle(npc.body); g.fillRect(cx-40,bodyTop+8,80,H-bodyTop-8); g.fillRect(cx-35,bodyTop,70,10);
+    g.fillCircle(cx-35,bodyTop+5,8); g.fillCircle(cx+35,bodyTop+5,8);
+    g.fillStyle(npc.accent || npc.body); g.fillTriangle(cx-8,bodyTop,cx,bodyTop+18,cx+8,bodyTop);
+    g.fillStyle(npc.skin); g.fillRect(headCx-8,cy+22,16,12);
+    g.fillCircle(headCx,cy,28); g.fillRect(headCx-22,cy,44,18); g.fillCircle(headCx,cy+16,20);
+
+    g.fillStyle(npc.hair);
+    switch (npc.hairStyle) {
+      case 'updo': g.fillRect(headCx-26,cy-30,52,18); g.fillCircle(headCx,cy-34,14); break;
+      case 'receding': g.fillRect(headCx-20,cy-28,40,10); g.fillRect(headCx+18,cy-22,12,12); g.fillRect(headCx-30,cy-22,12,12); break;
+      case 'long': g.fillRect(headCx-28,cy-28,56,16); g.fillRect(headCx-30,cy-16,10,42); g.fillRect(headCx+20,cy-16,10,42); break;
+      case 'slicked': g.fillRect(headCx-24,cy-28,48,14); g.fillRect(headCx-24,cy-18,48,4); break;
+      case 'bun': g.fillRect(headCx-22,cy-28,44,14); g.fillCircle(headCx,cy-32,10); break;
+    }
+
+    const eyeY = cy - 2;
+    const eyeSpacing = 12;
+    g.fillStyle(0xffffff);
+    const eyeW = mood === 'nervous' ? 10 : 8, eyeH = mood === 'nervous' ? 8 : 6;
+    g.fillRect(headCx-eyeSpacing-eyeW/2,eyeY-eyeH/2,eyeW,eyeH);
+    g.fillRect(headCx+eyeSpacing-eyeW/2,eyeY-eyeH/2,eyeW,eyeH);
+    g.fillStyle(0x332211);
+    const ps = mood === 'nervous' ? 3 : 4;
+    g.fillCircle(headCx-eyeSpacing,eyeY,ps); g.fillCircle(headCx+eyeSpacing,eyeY,ps);
+    g.fillStyle(0xffffff); g.fillRect(headCx-eyeSpacing-1,eyeY-2,2,2); g.fillRect(headCx+eyeSpacing-1,eyeY-2,2,2);
+
+    g.fillStyle(npc.hair, 0.9);
+    if (mood === 'angry') { g.fillRect(headCx-eyeSpacing-5,eyeY-9,10,2); g.fillRect(headCx+eyeSpacing-5,eyeY-9,10,2); }
+    else if (mood === 'nervous') { g.fillRect(headCx-eyeSpacing-5,eyeY-12,10,2); g.fillRect(headCx+eyeSpacing-5,eyeY-9,10,2); }
+    else { g.fillRect(headCx-eyeSpacing-5,eyeY-9,10,2); g.fillRect(headCx+eyeSpacing-5,eyeY-9,10,2); }
+
+    const noseColor = Phaser.Display.Color.GetColor(
+      Math.max(0,((npc.skin>>16)&0xff)-20), Math.max(0,((npc.skin>>8)&0xff)-15), Math.max(0,(npc.skin&0xff)-15));
+    g.fillStyle(noseColor); g.fillRect(headCx-2,eyeY+6,4,8); g.fillRect(headCx-3,eyeY+12,6,2);
+
+    if (mood === 'angry') { g.fillStyle(0x883333); g.fillRect(headCx-8,cy+18,16,3); }
+    else if (mood === 'nervous') { g.fillStyle(0x994444); g.fillRect(headCx-6,cy+17,12,5); g.fillStyle(0x222222); g.fillRect(headCx-4,cy+18,8,3); }
+    else if (mood === 'friendly') { g.fillStyle(0xaa5555); g.fillRect(headCx-10,cy+17,20,3); g.fillRect(headCx-8,cy+19,16,2); }
+    else { g.fillStyle(0x884444); g.fillRect(headCx-7,cy+18,14,2); }
   }
 
   /**
    * Draw costume ops with safety: skip ops that would cover the face,
    * force partial alpha on ops overlapping the head region.
    */
-  _execCostume(g, ops) {
+  _execCostume(g, ops, canvasSize) {
     if (!Array.isArray(ops)) return;
-    // Head region: roughly x(11-21), y(3-15) on 32×32 canvas
-    const HEAD_LEFT = 11, HEAD_RIGHT = 21, HEAD_TOP = 3, HEAD_BOTTOM = 15;
+    // Head region scaled to actual canvas size (base coords for 32×32)
+    const s = (canvasSize || 32) / 32;
+    const HEAD_LEFT = Math.round(11 * s), HEAD_RIGHT = Math.round(21 * s);
+    const HEAD_TOP = Math.round(3 * s), HEAD_BOTTOM = Math.round(15 * s);
     for (const op of ops) {
       if (!op || !op.op) continue;
       // Skip giant fills that would cover the whole sprite
-      if (op.op === 'fill' && op.w >= 28 && op.h >= 28) continue;
+      if (op.op === 'fill' && op.w >= Math.round(28 * s) && op.h >= Math.round(28 * s)) continue;
       // For rectangles overlapping the face, force transparency so features show through
       if ((op.op === 'fill' || op.op === 'roundRect') && op.w > 6 && op.h > 6) {
         const opRight = (op.x || 0) + (op.w || 0);

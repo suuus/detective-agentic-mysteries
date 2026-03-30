@@ -41,6 +41,18 @@ const EMOTION_BREATH_SPEED = {
   desperate:   2.2,
 };
 
+// Map sentiment states to sprite/portrait mood variants
+const SENTIMENT_TO_VARIANT = {
+  calm:        'neutral',
+  cooperative: 'friendly',
+  nervous:     'nervous',
+  scared:      'nervous',
+  angry:       'angry',
+  hostile:     'angry',
+  defensive:   'angry',
+  desperate:   'nervous',
+};
+
 /** @type {Map<string, { icon: any, lastState: string, breathTween: any }>} */
 const npcVisuals = new Map();
 let pollTimer = null;
@@ -61,12 +73,8 @@ export function initEmotionVisuals(scene, npcs, npcLabels) {
     const label = npcLabels[id];
     if (!label) continue;
 
-    // Create emotion icon text above the name label
-    const icon = scene.add.text(label.x, label.y - 12, '', {
-      fontSize: '10px',
-    }).setOrigin(0.5).setDepth(11).setAlpha(0);
-
-    npcVisuals.set(id, { icon, lastState: '', breathTween: null });
+    // Emotion icon is now embedded in the label text (emoji + name)
+    npcVisuals.set(id, { lastState: '', breathTween: null });
   }
 
   // Start polling
@@ -79,17 +87,7 @@ export function initEmotionVisuals(scene, npcs, npcLabels) {
  * Icons follow the NPC position and match their floor visibility.
  */
 export function syncEmotionPositions(npcs, npcLabels) {
-  for (const [id, vis] of npcVisuals) {
-    const sprite = npcs[id];
-    const label = npcLabels[id];
-    if (!sprite || !label || !vis.icon) continue;
-    vis.icon.x = sprite.x;
-    vis.icon.y = label.y - 10;
-    // Match NPC sprite visibility (handles floor toggling)
-    if (vis.icon.visible !== sprite.visible) {
-      vis.icon.setVisible(sprite.visible);
-    }
-  }
+  // Emotion icons are now embedded in label text — no separate icon to sync
 }
 
 /**
@@ -98,7 +96,6 @@ export function syncEmotionPositions(npcs, npcLabels) {
 export function cleanupEmotionVisuals() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   for (const vis of npcVisuals.values()) {
-    if (vis.icon) vis.icon.destroy();
     if (vis.breathTween) vis.breathTween.remove();
   }
   npcVisuals.clear();
@@ -126,27 +123,38 @@ async function _pollAndUpdate(npcs, npcLabels) {
     if (state === vis.lastState) continue; // no change
     vis.lastState = state;
 
-    // 1. Update floating icon
-    const emoji = EMOTION_ICONS[state] || '😐';
-    vis.icon.setText(emoji);
-    // Fade in if not already visible, pulse briefly on state change
-    if (vis.icon.alpha < 0.5) {
-      activeScene.tweens.add({ targets: vis.icon, alpha: 0.85, duration: 400 });
-    } else {
-      // Pulse on change
-      activeScene.tweens.add({
-        targets: vis.icon,
-        scale: { from: 1.4, to: 1.0 },
-        duration: 400,
-        ease: 'Back.easeOut',
-      });
+    // 1. Swap sprite texture to mood variant (if available) — target iso sprite if present
+    const variant = SENTIMENT_TO_VARIANT[state] || 'neutral';
+    const baseKey = `npc_${id}`;
+    const variantKey = variant === 'neutral' ? baseKey : `${baseKey}_${variant}`;
+    const isoSprite = activeScene?._npcIsoSprites?.[id];
+    const targetSprite = isoSprite || sprite;
+    if (activeScene.textures.exists(variantKey) && targetSprite.texture.key !== variantKey) {
+      targetSprite.setTexture(variantKey);
     }
 
-    // 2. Tint the sprite
-    const tint = EMOTION_TINTS[state] || 0xffffff;
-    sprite.setTint(tint);
+    // 2. Update label text: emoji + name in rounded box
+    const emoji = EMOTION_ICONS[state] || '\u{1F610}';
+    const label = npcLabels[id];
+    const npcName = npcs[id]?.getData?.('name') || '';
+    if (label && npcName) {
+      label.setText(emoji + ' ' + npcName);
+      // Redraw rounded background to fit new text width
+      const bg = activeScene?._npcLabelBgs?.[id];
+      if (bg) {
+        bg.clear();
+        bg.fillStyle(0x111111, 0.85);
+        const pad = { x: 7, y: 3 };
+        bg.fillRoundedRect(-label.width / 2 - pad.x, -label.height / 2 - pad.y,
+          label.width + pad.x * 2, label.height + pad.y * 2, 6);
+      }
+    }
 
-    // 3. Adjust breathing animation speed
+    // 3. Tint the sprite (subtler now that variants handle expression)
+    const tint = EMOTION_TINTS[state] || 0xffffff;
+    targetSprite.setTint(tint);
+
+    // 4. Adjust breathing animation speed
     const speedMul = EMOTION_BREATH_SPEED[state] || 1.0;
     const baseDuration = 2000;
     const newDuration = baseDuration / speedMul;
@@ -156,12 +164,18 @@ async function _pollAndUpdate(npcs, npcLabels) {
       vis.breathTween.remove();
     }
     vis.breathTween = activeScene.tweens.add({
-      targets: sprite,
+      targets: targetSprite,
       scaleY: { from: 1, to: 1.03 },
       duration: newDuration,
       yoyo: true,
       repeat: -1,
       ease: 'Sine.easeInOut',
     });
+
+    // 5. Broadcast mood variant for dialog portrait use
+    if (typeof window !== 'undefined') {
+      if (!window._npcMoodVariants) window._npcMoodVariants = {};
+      window._npcMoodVariants[id] = variant;
+    }
   }
 }

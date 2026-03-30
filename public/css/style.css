@@ -117,7 +117,7 @@ body {
 }
 
 .portrait-frame {
-  width: 64px; height: 64px;
+  width: 96px; height: 96px;
   border: 2px solid var(--gold);
   border-radius: 4px;
   overflow: hidden;
@@ -129,6 +129,12 @@ body {
   background-size: cover;
   background-position: center;
   image-rendering: pixelated;
+  transition: background-image 0.3s ease;
+}
+.portrait.portrait-sprite {
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center bottom;
 }
 
 .character-name {

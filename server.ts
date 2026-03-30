@@ -1721,6 +1721,18 @@ app.post("/api/mystery/generate", async (_req, res) => {
     let skeletonJson = extractJSON(skeletonRaw);
     skeletonJson = repairTruncatedJSON(skeletonJson);
     const skeleton = JSON.parse(skeletonJson);
+
+    // Validate skeleton has required arrays — truncated/repaired JSON may be incomplete
+    if (!Array.isArray(skeleton.characters) || skeleton.characters.length === 0) {
+      throw new Error(`Skeleton missing characters array (got ${typeof skeleton.characters}). JSON may have been too truncated to repair.`);
+    }
+    if (!Array.isArray(skeleton.rooms) || skeleton.rooms.length === 0) {
+      throw new Error(`Skeleton missing rooms array (got ${typeof skeleton.rooms}). JSON may have been too truncated to repair.`);
+    }
+    if (!Array.isArray(skeleton.evidence)) {
+      skeleton.evidence = [];
+    }
+
     console.log(`  Skeleton: "${skeleton.title}" — ${skeleton.characters.length} suspects, ${skeleton.evidence.length} evidence`);
 
     sendEvent({
