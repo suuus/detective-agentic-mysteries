@@ -76,8 +76,8 @@ Output a JSON object with this EXACT structure (no other text):
 }
 
 RULES:
-- Exactly 6 suspects, one of whom is the killer (isKiller: true)
-- Exactly 8 evidence items, with at least 3 directly linking to the killer
+- 6 to 12 suspects (one is the killer with isKiller: true). MORE suspects make for richer mysteries — aim for 8-10 when the setting supports it. Each suspect needs their OWN distinct motive, secret, alibi, and personality.
+- Exactly 8 evidence items, with at least 3 directly linking to the killer. EVERY evidence item MUST be in the "evidence" array — this is critical.
 - 5 to 8 rooms — pick a number that fits the setting naturally
 - Room sizes should VARY: mix small (storage, closet), medium (office), and large (hall, arena)
 - Include red herrings pointing to innocent suspects

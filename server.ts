@@ -1785,8 +1785,39 @@ app.post("/api/mystery/generate", async (_req, res) => {
     if (!Array.isArray(skeleton.rooms) || skeleton.rooms.length === 0) {
       throw new Error(`Skeleton missing rooms array (got ${typeof skeleton.rooms}). JSON may have been too truncated to repair.`);
     }
-    if (!Array.isArray(skeleton.evidence)) {
-      skeleton.evidence = [];
+    if (!Array.isArray(skeleton.evidence) || skeleton.evidence.length === 0) {
+      throw new Error(`Skeleton missing evidence array (got ${skeleton.evidence?.length ?? 0} items). Regeneration needed.`);
+    }
+
+    // Enforce minimum 6 suspects — if AI generated fewer, ask for more
+    if (skeleton.characters.length < 6) {
+      console.warn(`⚠️ Skeleton only has ${skeleton.characters.length} suspects — requesting ${6 - skeleton.characters.length} more`);
+      sendEvent({ phase: 'thinking', agent: 'architect', status: `Adding more suspects (${skeleton.characters.length} → 6+)...` });
+      const moreCharsRaw = await streamCollect(architect, `Your mystery "${skeleton.title}" only has ${skeleton.characters.length} suspects. A great mystery needs at least 6 suspects to create enough intrigue, red herrings, and social dynamics.
+
+ADD ${6 - skeleton.characters.length} more suspects to make it ${6} total. Each new suspect needs: id, name, role, location (existing room_id), personality, motive, secret, alibi, isKiller: false, spriteColors.
+
+Here are the existing rooms: ${skeleton.rooms.map((r: any) => r.id).join(', ')}
+Here are the existing suspects: ${skeleton.characters.map((c: any) => `${c.name} (${c.id})`).join(', ')}
+
+Output a JSON array of ONLY the new characters (same format as before). No markdown.`, 120_000);
+      try {
+        const moreChars = JSON.parse(extractJSON(moreCharsRaw));
+        const newChars = Array.isArray(moreChars) ? moreChars : (moreChars.characters || []);
+        for (const c of newChars) {
+          if (c.id && c.name && !skeleton.characters.find((ex: any) => ex.id === c.id)) {
+            skeleton.characters.push(c);
+          }
+        }
+        console.log(`  Now have ${skeleton.characters.length} suspects after supplement`);
+      } catch (err: any) {
+        console.warn('  Failed to parse supplemental characters:', err.message);
+      }
+    }
+
+    // Cap at 12 suspects
+    if (skeleton.characters.length > 12) {
+      skeleton.characters = skeleton.characters.slice(0, 12);
     }
 
     console.log(`  Skeleton: "${skeleton.title}" — ${skeleton.characters.length} suspects, ${skeleton.evidence.length} evidence`);
@@ -1925,6 +1956,7 @@ app.post("/api/mystery/generate", async (_req, res) => {
       if (!Array.isArray(creativeAssets.furniture) || creativeAssets.furniture.length === 0) missingProps.push('furniture');
 
       const missingChar: string[] = [];
+      if (!Array.isArray(creativeAssets.evidenceSprites) || creativeAssets.evidenceSprites.length === 0) missingChar.push('evidenceSprites');
       if (!Array.isArray(creativeAssets.npcCostumes) || creativeAssets.npcCostumes.length === 0) missingChar.push('npcCostumes');
       if (!Array.isArray(creativeAssets.portraits) || creativeAssets.portraits.length === 0) missingChar.push('portraits');
       if (!creativeAssets.crimeScene?.markers?.length) missingChar.push('crimeScene');
@@ -1970,12 +2002,14 @@ app.post("/api/mystery/generate", async (_req, res) => {
 
           if (missingChar.length > 0) {
             const charList = skeleton.characters.map((c: any) => `- ${c.id}: "${c.name}" (${c.role})`).join('\n');
+            const evList = skeleton.evidence.map((e: any) => `- ${e.id}: "${e.name}" — ${e.description || ''}`).join('\n');
             const schemas: Record<string, string> = {
+              evidenceSprites: '"evidenceSprites":[{"evidenceId":"id","width":16,"height":16,"draw":[...]}]',
               npcCostumes: '"npcCostumes":[{"characterId":"id","draw":[...]}]',
               portraits: '"portraits":[{"characterId":"id","draw":[...]}]',
               crimeScene: '"crimeScene":{"bodyOutline":{"draw":[...]},"markers":[{"name":"N","draw":[...]}],"barrier":{"draw":[...]}}',
             };
-            const p = `You are a VISUAL ARTIST. Setting: "${skeleton.setting}" | Crime: ${skeleton.crime || ''}\nCHARACTERS:\n${charList}\n${primHelp}\nGenerate ONLY these as minified JSON:\n{${missingChar.map(s => schemas[s]).filter(Boolean).join(',')}}\nnpcCostumes overlay 32×32 body 2-5 ops. Portraits 64×64 6-15 ops. CrimeScene body 48×64. characterId MUST match. Output ONLY JSON.`;
+            const p = `You are a VISUAL ARTIST. Setting: "${skeleton.setting}" | Crime: ${skeleton.crime || ''}\nCHARACTERS:\n${charList}\nEVIDENCE:\n${evList}\n${primHelp}\nGenerate ONLY these as minified JSON:\n{${missingChar.map(s => schemas[s]).filter(Boolean).join(',')}}\nevidenceSprites 16×16 each 3-6 ops per item, evidenceId MUST match. npcCostumes overlay 32×32 body 2-5 ops. Portraits 64×64 6-15 ops. CrimeScene body 48×64. characterId MUST match. Output ONLY JSON.`;
             repairPrompts.push(streamCollect(charSession, p, 120_000));
             repairOrder.push('char');
           }

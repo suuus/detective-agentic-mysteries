@@ -977,7 +977,10 @@ export default class RandomManorScene extends Phaser.Scene {
 
     const rooms = Object.values(this.rooms);
     for (const room of rooms) {
-      const count = 1 + Math.floor(Math.random() * 2);
+      // Scale furniture count with room size and available furniture types
+      const roomArea = room.w * room.h;
+      const baseCount = roomArea >= 80 ? 4 : roomArea >= 40 ? 3 : 2;
+      const count = Math.min(baseCount, furnKeys.length);
       const floorNum = this.multiFloor ? (room.floorNum ?? 0) : 0;
       for (let i = 0; i < count; i++) {
         const fx = room.x + 2 + Math.floor(Math.random() * (room.w - 4));

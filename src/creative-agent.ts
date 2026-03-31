@@ -236,12 +236,13 @@ RULES:
  */
 export function buildPropsPrompt(skeleton: CreativePromptInput): string {
   const roomList = skeleton.rooms.map(r => `- ${r.id}: "${r.name}"`).join('\n');
+  const roomCount = skeleton.rooms.length;
 
-  return `You are the PROPS DEPARTMENT for an ISOMETRIC 2.5D pixel-art mystery game. Your job is to fill every room with immersive, setting-specific objects that look like 3D isometric shapes — NOT flat top-down sprites.
+  return `You are the PROPS DEPARTMENT for an ISOMETRIC 2.5D pixel-art mystery game. Your job is to make EVERY ROOM feel alive and immersive with setting-specific objects that look like 3D isometric shapes — NOT flat top-down sprites.
 Setting: "${skeleton.setting}" | Theme: ${skeleton.settingTheme}
 Palette — wall: ${skeleton.visual?.wallColor || '#2d1117'}, accent: ${skeleton.visual?.accentColor || '#c9a84c'}, furniture style: ${skeleton.visual?.furnitureStyle || 'wooden'}
 
-ROOMS:
+ROOMS (${roomCount} total):
 ${roomList}
 
 ${PRIMITIVES_HELP}
@@ -263,18 +264,26 @@ RULES:
   * Canvas height = 2*hh + depth + margin. Canvas width = 2*hw.
   * The base diamond bottom vertex should be near the canvas bottom edge.
 
-- Decorations: 2-3 per room. Canvas 32-48px wide, height varies. 6-12 draw ops each:
+- Decorations: 3-5 per room (for ALL ${roomCount} rooms). Canvas 32-48px wide, height varies. 6-12 draw ops each:
   * Think about what SPECIFIC objects belong in each room based on purpose AND setting
   * A winery cellar gets barrel iso-boxes, a ship bridge gets console iso-boxes
+  * Include both large statement pieces AND smaller accent items per room
+  * Add wall-mounted or ceiling items (lamps, signs, clocks, mounted equipment) as smaller sprites
   * Each item must look like a recognisable 3D object from the isometric viewpoint
   * roomId MUST exactly match the room IDs listed above.
+  * EVERY room must have decorations — no empty rooms!
 
-- Furniture: 5-8 setting-specific pieces. Canvas 40-56px wide. 8-14 draw ops each:
+- Furniture: 10-15 setting-specific pieces. Canvas 40-56px wide. 8-14 draw ops each:
   * Build each piece as an iso box base + details. E.g. a desk = iso box body + diamond paper on top + poly drawer on right face
-  * Include at least 2 seating items and 2 surface/storage items appropriate to the setting
-  * Vary sizes: some compact (hw=12), some large (hw=24)
+  * Include at least 3 seating items, 3 surface/storage items, AND 2 unique statement pieces
+  * Vary sizes: some compact (hw=12), some medium (hw=18), some large (hw=24)
+  * Think about the SETTING: what furniture would ACTUALLY be in this place?
 
-- Ambient props: 3-5 types. 8-16px each. 2-5 draw ops. Small scattered details (can be flat — they're tiny)
+- Ambient props: 6-10 types. 8-16px each. 2-5 draw ops. count 2-8 each. Small scattered details (can be flat — they're tiny):
+  * Floor debris matching the setting (sawdust, broken glass, flower petals, coffee rings, wire, paper scraps)
+  * Stains or marks (scorch marks, water puddles, oil drips, chalk marks)
+  * Tiny objects (keys, coins, matchbooks, bottle caps, pens, cigarette butts)
+  * Make them varied and setting-specific — they bring the world to life
 
 - All colors: 6-digit hex. Use alpha (0.0-1.0) for glass, liquids, shadows. Output ONLY minified JSON.`;
 }
@@ -297,10 +306,10 @@ export function buildCharacterAssetsPrompt(skeleton: CreativePromptInput): strin
   return `You are a VISUAL ARTIST for an ISOMETRIC 2.5D pixel-art mystery game.
 Setting: "${skeleton.setting}" | Crime: ${skeleton.crime}
 
-CHARACTERS:
+CHARACTERS (${skeleton.characters.length}):
 ${charList}
 
-EVIDENCE:
+EVIDENCE (${skeleton.evidence.length} items — EVERY ONE needs a sprite):
 ${evList}
 
 ${PRIMITIVES_HELP}
@@ -314,7 +323,7 @@ Output MINIFIED JSON (no extra whitespace) with these sections:
 }
 
 RULES:
-- Evidence sprites: UNIQUE 16×16 for EVERY item. Visually represent what the item IS (a vial shape, folded letter, knife blade, etc). 3-6 draw ops per item. evidenceId MUST exactly match IDs above.
+- Evidence sprites: A UNIQUE 16×16 sprite for ALL ${skeleton.evidence.length} items. This is CRITICAL — every evidence ID above MUST have a matching sprite. Visually represent what the item IS (a vial shape, folded letter, knife blade, syringe, torn photo, etc). 3-6 draw ops per item. Use bright, visible colors so items stand out against dark floors. evidenceId MUST exactly match IDs above.
 - NPC costumes: overlay on 32×32 body (body at cx=16 cy=16, rect (10,14)→(22,28), head (11,6)→(21,15)). Add hats, badges, scarves, aprons, glasses, jewelry, uniforms — make each character visually unique and memorable. 2-5 draw ops. characterId MUST match.
 - Portraits: 64×64 head+shoulders for EVERY character. Include face shape (ellipse), eyes (circles), hair, distinguishing features (glasses, beard, scar, hat, earrings), clothing neckline. Use the character's role to inform their appearance. 6-15 draw ops each for rich detail. characterId MUST match.
 - Crime scene: body outline 48×64 (use lines for limbs + circle for head), 1-2 scene markers 16×16 (blood, chemical spill, scorch marks — whatever fits the specific crime), barrier 64×8. Make them visceral and setting-appropriate.
