@@ -104,6 +104,69 @@ export default class RandomBootScene extends Phaser.Scene {
     }
   }
 
+  /** Validate and repair AI-generated draw ops. Clamps coordinates to canvas, fixes colors. */
+  _validateDrawOps(ops, canvasW, canvasH) {
+    if (!Array.isArray(ops)) return [];
+    return ops.filter(op => {
+      if (!op || !op.op) return false;
+      // Fix color — accept 3-digit hex, numeric, or missing
+      if (typeof op.color === 'number') {
+        op.color = '#' + op.color.toString(16).padStart(6, '0');
+      } else if (typeof op.color === 'string') {
+        op.color = op.color.trim();
+        if (op.color.match(/^#[0-9a-fA-F]{3}$/)) {
+          const c = op.color.slice(1);
+          op.color = `#${c[0]}${c[0]}${c[1]}${c[1]}${c[2]}${c[2]}`;
+        } else if (!op.color.match(/^#[0-9a-fA-F]{6}$/)) {
+          op.color = '#666666'; // unfixable → visible fallback
+        }
+      } else {
+        op.color = '#666666';
+      }
+      // Clamp numeric fields to reasonable canvas range
+      const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+      const margin = 4; // allow slight overflow for anti-aliasing
+      if (op.op === 'poly' && Array.isArray(op.points)) {
+        if (op.points.length < 6) return false; // need at least a triangle
+        for (let i = 0; i < op.points.length; i += 2) {
+          if (typeof op.points[i] !== 'number' || typeof op.points[i+1] !== 'number') return false;
+          op.points[i] = clamp(op.points[i], -margin, canvasW + margin);
+          op.points[i+1] = clamp(op.points[i+1], -margin, canvasH + margin);
+        }
+      }
+      if (op.op === 'diamond') {
+        if (typeof op.cx !== 'number' || typeof op.cy !== 'number') return false;
+        op.cx = clamp(op.cx, 0, canvasW);
+        op.cy = clamp(op.cy, 0, canvasH);
+        op.hw = clamp(op.hw || 16, 2, canvasW);
+        op.hh = clamp(op.hh || 12, 2, canvasH);
+      }
+      if (op.op === 'fill' || op.op === 'stroke' || op.op === 'roundRect') {
+        if (typeof op.x !== 'number') op.x = 0;
+        if (typeof op.y !== 'number') op.y = 0;
+        op.x = clamp(op.x, -margin, canvasW);
+        op.y = clamp(op.y, -margin, canvasH);
+      }
+      if (op.op === 'circle' || op.op === 'ellipse') {
+        if (typeof op.x !== 'number') op.x = canvasW / 2;
+        if (typeof op.y !== 'number') op.y = canvasH / 2;
+        op.x = clamp(op.x, -margin, canvasW + margin);
+        op.y = clamp(op.y, -margin, canvasH + margin);
+      }
+      if (op.op === 'tri') {
+        for (const k of ['x1','y1','x2','y2','x3','y3']) {
+          if (typeof op[k] !== 'number') return false;
+        }
+      }
+      if (op.op === 'line') {
+        for (const k of ['x1','y1','x2','y2']) {
+          if (typeof op[k] !== 'number') return false;
+        }
+      }
+      return true;
+    });
+  }
+
   _genPlayer() {
     const S = 48;
     const dirNames = ['down','left','right','up'];
@@ -379,15 +442,22 @@ export default class RandomBootScene extends Phaser.Scene {
     // AI-designed setting-specific furniture
     const ca = window._generatedWorld?.creativeAssets;
     if (Array.isArray(ca?.furniture)) {
+      let validCount = 0;
       ca.furniture.forEach((furn, i) => {
         if (!furn?.draw?.length) return;
         const w = Math.min(Math.max(furn.width || 48, 16), 64);
-        const h = Math.min(Math.max(furn.height || 32, 16), 64);
+        const h = Math.min(Math.max(furn.height || 48, 16), 72);
+        const validated = this._validateDrawOps(furn.draw, w, h);
+        if (validated.length < 2) {
+          console.warn(`[Creative] Furniture "${furn.name}" has only ${validated.length} valid ops, skipping`);
+          return;
+        }
         const key = `furn_custom_${i}`;
         furn._texKey = key;
-        this._tex(key, w, h, g => this._execDraw(g, furn.draw));
+        this._tex(key, w, h, g => this._execDraw(g, validated));
+        validCount++;
       });
-      console.log(`[Creative] Generated ${ca.furniture.length} custom furniture textures`);
+      console.log(`[Creative] Generated ${validCount}/${ca.furniture.length} custom furniture textures`);
     }
   }
 
@@ -669,10 +739,21 @@ export default class RandomBootScene extends Phaser.Scene {
     world.evidence.forEach((ev) => {
       const aiSprite = spriteLookup[ev.id];
       if (aiSprite) {
-        // Use AI-designed unique sprite
+        // Use AI-designed unique sprite — validate draw ops
         const w = Math.min(Math.max(aiSprite.width || 16, 8), 24);
         const h = Math.min(Math.max(aiSprite.height || 16, 8), 24);
-        this._tex('ev_' + ev.id, w, h, g => this._execDraw(g, aiSprite.draw));
+        const validated = this._validateDrawOps(aiSprite.draw, w, h);
+        if (validated.length >= 2) {
+          this._tex('ev_' + ev.id, w, h, g => this._execDraw(g, validated));
+        } else {
+          // AI sprite was invalid — use enhanced fallback
+          const col = ev.color ? this._hex(ev.color) : 0xf5f0e0;
+          this._tex('ev_' + ev.id, 16, 16, g => {
+            g.fillStyle(col); g.fillRect(3,2,10,12);
+            g.fillStyle(col, 0.6); g.fillRect(5,4,6,3);
+            g.fillStyle(0x333333); g.fillRect(5,9,5,1); g.fillRect(5,11,4,1);
+          });
+        }
       } else {
         // Fallback: generic colored evidence
         const col = ev.color ? this._hex(ev.color) : 0xf5f0e0;
@@ -871,17 +952,20 @@ export default class RandomBootScene extends Phaser.Scene {
     if (!ca) return;
 
     // Generate decoration textures — keyed by "decor_{roomId}_{index}"
-    let decoIdx = 0;
+    let decoIdx = 0, decoValid = 0;
     if (Array.isArray(ca.decorations)) {
       for (const roomDecor of ca.decorations) {
         if (!roomDecor?.items) continue;
         for (const item of roomDecor.items) {
           if (!item?.draw?.length) continue;
           const w = Math.min(Math.max(item.width || 32, 8), 64);
-          const h = Math.min(Math.max(item.height || 32, 8), 64);
+          const h = Math.min(Math.max(item.height || 32, 8), 72);
+          const validated = this._validateDrawOps(item.draw, w, h);
+          if (validated.length < 2) { decoIdx++; continue; }
           const key = `decor_${decoIdx++}`;
-          item._texKey = key; // attach generated key for scene to reference
-          this._tex(key, w, h, g => this._execDraw(g, item.draw));
+          item._texKey = key;
+          this._tex(key, w, h, g => this._execDraw(g, validated));
+          decoValid++;
         }
       }
     }
@@ -892,9 +976,11 @@ export default class RandomBootScene extends Phaser.Scene {
         if (!prop?.draw?.length) return;
         const w = Math.min(Math.max(prop.width || 12, 4), 32);
         const h = Math.min(Math.max(prop.height || 12, 4), 32);
+        const validated = this._validateDrawOps(prop.draw, w, h);
+        if (validated.length === 0) return;
         const key = `prop_${i}`;
         prop._texKey = key;
-        this._tex(key, w, h, g => this._execDraw(g, prop.draw));
+        this._tex(key, w, h, g => this._execDraw(g, validated));
       });
     }
 
@@ -911,8 +997,10 @@ export default class RandomBootScene extends Phaser.Scene {
     if (Array.isArray(ca.portraits)) {
       for (const portrait of ca.portraits) {
         if (!portrait?.characterId || !Array.isArray(portrait.draw) || !portrait.draw.length) continue;
+        const validated = this._validateDrawOps(portrait.draw, 64, 64);
+        if (validated.length < 3) continue;
         const key = `portrait_${portrait.characterId}`;
-        this._tex(key, 64, 64, g => this._execDraw(g, portrait.draw));
+        this._tex(key, 64, 64, g => this._execDraw(g, validated));
       }
       console.log(`[Creative] Generated ${ca.portraits.length} character portraits`);
     }
@@ -926,6 +1014,6 @@ export default class RandomBootScene extends Phaser.Scene {
       console.log(`[Creative] Generated custom weather particle texture (${w}×${h})`);
     }
 
-    console.log(`[Creative] Generated ${decoIdx} decoration textures, ${ca.ambientProps?.length || 0} prop textures`);
+    console.log(`[Creative] Generated ${decoValid}/${decoIdx} decorations, ${ca.ambientProps?.length || 0} prop textures`);
   }
 }

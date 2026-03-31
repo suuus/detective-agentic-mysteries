@@ -965,15 +965,21 @@ export default class RandomManorScene extends Phaser.Scene {
 
   _placeFurniture(T) {
     const ox = this._isoOffsetX, oy = this._isoOffsetY;
-    const furnKeys = ['furn_table', 'furn_desk', 'furn_bookshelf', 'furn_plant'];
+    // Prefer AI-designed furniture; generic items only as fallback padding
+    const customKeys = [];
+    const genericKeys = ['furn_table', 'furn_desk', 'furn_bookshelf', 'furn_plant'];
     const ca = window._generatedWorld?.creativeAssets;
     if (Array.isArray(ca?.furniture)) {
       for (const furn of ca.furniture) {
         if (furn?._texKey && this.textures.exists(furn._texKey)) {
-          furnKeys.push(furn._texKey);
+          customKeys.push(furn._texKey);
         }
       }
     }
+    // Custom items weighted 3x over generics so AI furniture dominates
+    const furnKeys = customKeys.length > 0
+      ? [...customKeys, ...customKeys, ...customKeys, ...genericKeys]
+      : genericKeys;
 
     const rooms = Object.values(this.rooms);
     for (const room of rooms) {

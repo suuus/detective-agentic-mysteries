@@ -169,35 +169,105 @@ interface CreativePromptInput {
   visual?: { wallColor: string; wallAccent: string; accentColor: string; furnitureStyle: string };
 }
 
-const PRIMITIVES_HELP = `You have 10 drawing primitives on a pixel canvas:
-  fill — filled rect  {"op":"fill","color":"#hex","x":0,"y":0,"w":10,"h":10}
-  circle — filled circle {"op":"circle","color":"#hex","x":5,"y":5,"r":4}
-  line — segment {"op":"line","color":"#hex","x1":0,"y1":0,"x2":10,"y2":10,"width":1}
-  tri — filled triangle {"op":"tri","color":"#hex","x1":0,"y1":8,"x2":4,"y2":0,"x3":8,"y3":8}
-  stroke — stroked rect {"op":"stroke","color":"#hex","x":0,"y":0,"w":10,"h":10,"width":1}
-  ellipse — filled ellipse {"op":"ellipse","color":"#hex","x":16,"y":16,"w":20,"h":12}
-  arc — stroked arc {"op":"arc","color":"#hex","x":16,"y":16,"r":10,"start":0,"end":3.14,"width":2}
-  roundRect — rounded rect {"op":"roundRect","color":"#hex","x":2,"y":2,"w":28,"h":28,"r":4}
-  diamond — isometric diamond {"op":"diamond","color":"#hex","cx":24,"cy":12,"hw":20,"hh":15}
-  poly — filled polygon {"op":"poly","color":"#hex","points":[x1,y1,x2,y2,x3,y3,x4,y4]}
+const PRIMITIVES_HELP = `=== DRAWING PRIMITIVES ===
+You have 10 drawing primitives on a pixel canvas. Coordinates are (0,0) at TOP-LEFT.
+  fill      — filled rect     {"op":"fill","color":"#hex","x":0,"y":0,"w":10,"h":10}
+  circle    — filled circle   {"op":"circle","color":"#hex","x":5,"y":5,"r":4}
+  line      — line segment    {"op":"line","color":"#hex","x1":0,"y1":0,"x2":10,"y2":10,"width":1}
+  tri       — filled triangle {"op":"tri","color":"#hex","x1":0,"y1":8,"x2":4,"y2":0,"x3":8,"y3":8}
+  stroke    — stroked rect    {"op":"stroke","color":"#hex","x":0,"y":0,"w":10,"h":10,"width":1}
+  ellipse   — filled ellipse  {"op":"ellipse","color":"#hex","x":16,"y":16,"w":20,"h":12}
+  arc       — stroked arc     {"op":"arc","color":"#hex","x":16,"y":16,"r":10,"start":0,"end":3.14,"width":2}
+  roundRect — rounded rect    {"op":"roundRect","color":"#hex","x":2,"y":2,"w":28,"h":28,"r":4}
+  diamond   — isometric diamond {"op":"diamond","color":"#hex","cx":24,"cy":12,"hw":20,"hh":15}
+  poly      — filled polygon  {"op":"poly","color":"#hex","points":[x1,y1,x2,y2,...]}
 All ops accept optional "alpha" (0.0-1.0). Arc angles in radians.
 
-IMPORTANT — ISOMETRIC STYLE:
-This game uses isometric 2.5D rendering. ALL objects must look like 3D isometric shapes:
-- Top face = diamond (flat surface seen from above)
-- Left face = darker parallelogram (shadow side)
-- Right face = slightly lighter parallelogram
-- Standard iso slope: for every pixel right, go UP 0.75 pixels (hh/hw ratio = 3:4)
-- Use "diamond" op for top surfaces, "poly" op for left/right side faces
-- Use "tri" for iso-aligned triangular details
+=== ISOMETRIC DESIGN RULES (CRITICAL — READ CAREFULLY) ===
+This game renders in ISOMETRIC 2.5D. Objects must look like 3D shapes viewed from above-right.
 
-ISOMETRIC BOX pattern (the fundamental building block):
-Given center cx, base Y at baseY, half-widths hw/hh (4:3 ratio), depth d:
-  Top diamond: {"op":"diamond","color":"LIGHTEST","cx":cx,"cy":baseY-d-hh,"hw":hw,"hh":hh}
-  Left face:   {"op":"poly","color":"DARKEST","points":[cx-hw,baseY-d, cx,baseY-d+hh, cx,baseY+hh, cx-hw,baseY]}
-  Right face:  {"op":"poly","color":"MEDIUM","points":[cx+hw,baseY-d, cx,baseY-d+hh, cx,baseY+hh, cx+hw,baseY]}
+GOLDEN RULE: hw:hh ratio is ALWAYS 4:3 (e.g. hw=20,hh=15 or hw=12,hh=9 or hw=8,hh=6).
 
-NEVER use flat rectangles for furniture/decorations. Always use diamond+poly for the iso look.`;
+THE ISO BOX — every piece of furniture/decoration is built from this pattern:
+  Given: canvas width W, canvas height H, half-widths hw/hh, vertical depth d.
+  cx = W/2 (horizontal center of canvas)
+  baseY = H - hh (bottom of the box — diamond bottom vertex near canvas bottom)
+
+  Step 1 — LEFT FACE (darkest, shadow side):
+    {"op":"poly","color":"DARK","points":[cx-hw,baseY-d, cx,baseY-d+hh, cx,baseY+hh, cx-hw,baseY]}
+  Step 2 — RIGHT FACE (medium, lit side):
+    {"op":"poly","color":"MED","points":[cx+hw,baseY-d, cx,baseY-d+hh, cx,baseY+hh, cx+hw,baseY]}
+  Step 3 — TOP FACE (lightest, flat surface):
+    {"op":"diamond","color":"LIGHT","cx":cx,"cy":baseY-d,"hw":hw,"hh":hh}
+  Step 4+ — DETAILS drawn ON the faces (not floating in air):
+    Details on right face: use poly with x between cx and cx+hw, y between baseY-d+hh and baseY+hh
+    Details on left face: use poly with x between cx-hw and cx
+    Details on top: use smaller diamond/poly within the top diamond bounds
+
+=== WORKED EXAMPLE: A 48×54 DESK (hw=24, hh=18, depth=10) ===
+  Canvas: width=48, height=54. cx=24, baseY=54-18=36.
+  [
+    {"op":"poly","color":"#3a2510","points":[0,26, 24,44, 24,54, 0,36]},
+    {"op":"poly","color":"#4a3218","points":[48,26, 24,44, 24,54, 48,36]},
+    {"op":"diamond","color":"#6b4423","cx":24,"cy":26,"hw":24,"hh":18},
+    {"op":"diamond","color":"#f5f0e0","cx":22,"cy":30,"hw":8,"hh":6,"alpha":0.9},
+    {"op":"poly","color":"#5a3a20","points":[26,44, 42,35, 42,40, 26,49]}
+  ]
+
+=== WORKED EXAMPLE: A 24×30 CRATE (hw=12, hh=9, depth=10) ===
+  Canvas: width=24, height=30. cx=12, baseY=30-9=21.
+  [
+    {"op":"poly","color":"#2a1a0a","points":[0,11, 12,20, 12,30, 0,21]},
+    {"op":"poly","color":"#3a2a15","points":[24,11, 12,20, 12,30, 24,21]},
+    {"op":"diamond","color":"#5a3a1a","cx":12,"cy":11,"hw":12,"hh":9},
+    {"op":"line","color":"#7a5a2a","x1":13,"y1":23,"x2":21,"y2":18,"width":1},
+    {"op":"line","color":"#7a5a2a","x1":13,"y1":27,"x2":21,"y2":22,"width":1}
+  ]
+
+=== WORKED EXAMPLE: A 16×16 EVIDENCE SPRITE (a vial/bottle) ===
+  Evidence is SMALL (16×16). Use recognisable silhouettes with BRIGHT colors.
+  [
+    {"op":"roundRect","color":"#88ccff","x":5,"y":2,"w":6,"h":10,"r":2},
+    {"op":"fill","color":"#44aadd","x":6,"y":6,"w":4,"h":5},
+    {"op":"fill","color":"#cccccc","x":6,"y":1,"w":4,"h":3},
+    {"op":"circle","color":"#ffffff","x":7,"y":5,"r":1,"alpha":0.6}
+  ]
+
+=== WORKED EXAMPLE: A 16×16 EVIDENCE SPRITE (a letter/document) ===
+  [
+    {"op":"fill","color":"#f5f0d0","x":2,"y":1,"w":12,"h":14},
+    {"op":"fill","color":"#e0d8b0","x":2,"y":1,"w":12,"h":2},
+    {"op":"line","color":"#555555","x1":4,"y1":5,"x2":12,"y2":5,"width":1},
+    {"op":"line","color":"#555555","x1":4,"y1":8,"x2":11,"y2":8,"width":1},
+    {"op":"line","color":"#555555","x1":4,"y1":11,"x2":9,"y2":11,"width":1}
+  ]
+
+=== WORKED EXAMPLE: A 16×16 EVIDENCE SPRITE (a knife) ===
+  [
+    {"op":"tri","color":"#cccccc","x1":3,"y1":14,"x2":12,"y2":3,"x3":14,"y3":5},
+    {"op":"fill","color":"#8B4513","x":1,"y":12,"w":4,"h":3},
+    {"op":"line","color":"#ffffff","x1":5,"y1":12,"x2":13,"y2":3,"width":1,"alpha":0.4}
+  ]
+
+=== QUICK-REFERENCE ISO BOX SIZES ===
+  Small item:  W=24, H=30,  hw=12, hh=9,  depth=8-12.  cx=12, baseY=21
+  Medium item: W=40, H=44,  hw=20, hh=15, depth=4-12.  cx=20, baseY=29
+  Large item:  W=48, H=54,  hw=24, hh=18, depth=8-16.  cx=24, baseY=36
+  Tall item:   W=48, H=60,  hw=24, hh=18, depth=20-28. cx=24, baseY=42
+
+=== COLOR RULES ===
+- LEFT face: darkest shade (shadow). RIGHT face: mid shade. TOP face: lightest (highlight).
+- Darken: lower hex digits (e.g. #6b4423 → left #3a2510, right #4a3218).
+- Evidence: use BRIGHT, saturated colors — items must pop against dark floors.
+- All colors MUST be 6-digit hex (#RRGGBB). Never 3-digit or named colors.
+
+=== COMMON MISTAKES TO AVOID ===
+- DO NOT use flat "fill" rects for furniture/decoration bodies — they look wrong. ALWAYS use poly+diamond.
+- DO NOT draw outside canvas bounds — canvas W×H defines the coordinate space.
+- DO NOT forget alpha on glass/liquid objects — use 0.3-0.7 for translucency.
+- DO NOT make evidence sprites too dark — they must be visible on dark floors.
+- DO NOT use hw:hh ratios other than 4:3 — it breaks isometric alignment.
+- ALWAYS draw faces in order: left poly, right poly, top diamond, then details.`;
 
 /**
  * Prompt 1 of 3: Environment atmosphere (wall tile, particles, room ambiance, weather).
@@ -222,8 +292,16 @@ Output MINIFIED JSON (no extra whitespace) with ALL 4 sections:
   "weather":{"particle":{"width":4,"height":8,"draw":[...]},"config":{"speedX":{"min":-60,"max":-30},"speedY":{"min":280,"max":360},"alpha":{"start":0.5,"end":0.15},"frequency":18,"lifespan":1200,"blendMode":"ADD"}}
 }
 
+CRITICAL — Your wallTile MUST follow this exact structure (change colors to match the setting):
+{"draw":[{"op":"poly","color":"#1a0a0e","points":[0,24,32,48,32,72,0,48]},{"op":"poly","color":"#250f14","points":[64,24,32,48,32,72,64,48]},{"op":"diamond","color":"#2d1117","cx":32,"cy":24,"hw":32,"hh":24},{"op":"line","color":"#1a0808","x1":4,"y1":32,"x2":28,"y2":44,"width":1,"alpha":0.3},{"op":"line","color":"#1a0808","x1":4,"y1":40,"x2":28,"y2":52,"width":1,"alpha":0.3}]}
+Replace the 5 hex colors with colors that match "${skeleton.setting}" (keep the same coordinate structure).
+
 RULES:
-- Wall tile: 64×72 ISOMETRIC BLOCK. The wall is a 3D block with a diamond top face at (32, 24) with hw=32/hh=24 and left+right side faces extending 24px down. Use poly for side faces (darker shading) and diamond for the top. Add texture detail (mortar lines, grain, weathering) using tri/line ON the iso faces. 5-10 draw ops.
+- Wall tile: 64×72 ISOMETRIC BLOCK. cx=32, the top diamond is at cy=24 with hw=32, hh=24. Left+right side faces extend 24px down from the diamond edges to the bottom. Draw order: left poly, right poly, top diamond, then texture details ON the faces. Example structure:
+    Left:  {"op":"poly","color":"DARK","points":[0,24, 32,48, 32,72, 0,48]}
+    Right: {"op":"poly","color":"MED","points":[64,24, 32,48, 32,72, 64,48]}
+    Top:   {"op":"diamond","color":"LIGHT","cx":32,"cy":24,"hw":32,"hh":24}
+    Then add 2-4 detail ops (mortar lines, grain, weathering) ON the faces using line/tri/poly.
 - Particles: Atmospheric effect matching setting. Choose thoughtfully.
 - Room ambiance: EVERY room gets a unique tint. tintAlpha 0.03-0.12.
 - Weather: particle texture ≤16×16 matching "${skeleton.weather || 'clear'}". Config should feel natural.
@@ -254,17 +332,18 @@ Output MINIFIED JSON (no extra whitespace) with ALL 3 sections:
   "ambientProps":[{"name":"N","width":12,"height":12,"count":4,"draw":[...]}]
 }
 
-RULES:
-- ALL decorations and furniture MUST be drawn as ISOMETRIC 3D BOXES using the iso box pattern:
-  1. Draw left face (darkest color) as a "poly" with 4 points
-  2. Draw right face (medium color) as a "poly" with 4 points
-  3. Draw top face (lightest color) as a "diamond" centered above the box
-  4. Add details ON the iso faces using poly/tri/line (NOT flat fill rects)
-  * hw:hh ratio must be 4:3 (e.g. hw=20,hh=15 or hw=24,hh=18)
-  * Canvas height = 2*hh + depth + margin. Canvas width = 2*hw.
-  * The base diamond bottom vertex should be near the canvas bottom edge.
+CRITICAL — YOUR FIRST FURNITURE ITEM MUST BE EXACTLY THIS (copy it verbatim to prove you understand the draw format, then generate your own unique items after it):
+{"name":"Table","width":40,"height":44,"draw":[{"op":"poly","color":"#3a2510","points":[0,25,20,40,20,44,0,29]},{"op":"poly","color":"#4a3218","points":[40,25,20,40,20,44,40,29]},{"op":"diamond","color":"#6b4423","cx":20,"cy":25,"hw":20,"hh":15},{"op":"diamond","color":"#f5f0e0","cx":18,"cy":29,"hw":6,"hh":4,"alpha":0.8}]}
 
-- Decorations: 3-5 per room (for ALL ${roomCount} rooms). Canvas 32-48px wide, height varies. 6-12 draw ops each:
+RULES:
+- ALL decorations and furniture MUST be drawn as ISOMETRIC 3D BOXES — follow the iso box pattern from the design rules above.
+  MANDATORY DRAW ORDER: 1) left poly (darkest), 2) right poly (medium), 3) top diamond (lightest), 4) detail ops.
+  Use the QUICK-REFERENCE SIZES from the design rules to compute exact coordinates:
+    Small:  width=24, height=30,  hw=12, hh=9,  cx=12, baseY=21
+    Medium: width=40, height=44,  hw=20, hh=15, cx=20, baseY=29
+    Large:  width=48, height=54,  hw=24, hh=18, cx=24, baseY=36
+
+- Decorations: 3-5 per room (for ALL ${roomCount} rooms). Use small or medium size. 6-12 draw ops each:
   * Think about what SPECIFIC objects belong in each room based on purpose AND setting
   * A winery cellar gets barrel iso-boxes, a ship bridge gets console iso-boxes
   * Include both large statement pieces AND smaller accent items per room
@@ -273,10 +352,10 @@ RULES:
   * roomId MUST exactly match the room IDs listed above.
   * EVERY room must have decorations — no empty rooms!
 
-- Furniture: 10-15 setting-specific pieces. Canvas 40-56px wide. 8-14 draw ops each:
-  * Build each piece as an iso box base + details. E.g. a desk = iso box body + diamond paper on top + poly drawer on right face
+- Furniture: 10-15 setting-specific pieces. Use medium (40×44) or large (48×54) size. 8-14 draw ops each:
+  * EVERY piece starts with the 3 iso box ops (left poly, right poly, top diamond) then adds details
   * Include at least 3 seating items, 3 surface/storage items, AND 2 unique statement pieces
-  * Vary sizes: some compact (hw=12), some medium (hw=18), some large (hw=24)
+  * Vary sizes: use the small/medium/large presets above
   * Think about the SETTING: what furniture would ACTUALLY be in this place?
 
 - Ambient props: 6-10 types. 8-16px each. 2-5 draw ops. count 2-8 each. Small scattered details (can be flat — they're tiny):
@@ -322,8 +401,17 @@ Output MINIFIED JSON (no extra whitespace) with these sections:
   "crimeScene":{"bodyOutline":{"draw":[...]},"markers":[{"name":"N","draw":[...]}],"barrier":{"draw":[...]}}
 }
 
+CRITICAL — Your FIRST evidenceSprite must use this exact pattern (adapt colors/shape to the actual first evidence item, but keep the same structure):
+{"evidenceId":"FIRST_ID","width":16,"height":16,"draw":[{"op":"roundRect","color":"#88ccff","x":3,"y":1,"w":10,"h":13,"r":2},{"op":"fill","color":"#44aadd","x":4,"y":5,"w":8,"h":8},{"op":"fill","color":"#cccccc","x":5,"y":1,"w":6,"h":3},{"op":"circle","color":"#ffffff","x":7,"y":7,"r":1,"alpha":0.6}]}
+Replace FIRST_ID with the actual first evidence ID from the list above and adapt colors to match that item. Then generate unique sprites for all remaining evidence.
+
 RULES:
-- Evidence sprites: A UNIQUE 16×16 sprite for ALL ${skeleton.evidence.length} items. This is CRITICAL — every evidence ID above MUST have a matching sprite. Visually represent what the item IS (a vial shape, folded letter, knife blade, syringe, torn photo, etc). 3-6 draw ops per item. Use bright, visible colors so items stand out against dark floors. evidenceId MUST exactly match IDs above.
+- Evidence sprites: A UNIQUE 16×16 sprite for ALL ${skeleton.evidence.length} items. This is CRITICAL — every evidence ID above MUST have a matching sprite.
+  * See the 3 WORKED EXAMPLES in the design rules for exactly how to draw a vial, letter, and knife.
+  * Evidence is FLAT (not isometric) — it's small enough that fill/roundRect/tri/circle work fine.
+  * Use BRIGHT, saturated colors (#88ccff, #ff6666, #f5f0d0, #66ff66) so items pop against dark floors.
+  * Create recognisable silhouettes: vial shape, folded letter, knife blade, syringe, torn photo, key, ring, etc.
+  * 3-6 draw ops per item. All coords must be within 0-16. evidenceId MUST exactly match IDs above.
 - NPC costumes: overlay on 32×32 body (body at cx=16 cy=16, rect (10,14)→(22,28), head (11,6)→(21,15)). Add hats, badges, scarves, aprons, glasses, jewelry, uniforms — make each character visually unique and memorable. 2-5 draw ops. characterId MUST match.
 - Portraits: 64×64 head+shoulders for EVERY character. Include face shape (ellipse), eyes (circles), hair, distinguishing features (glasses, beard, scar, hat, earrings), clothing neckline. Use the character's role to inform their appearance. 6-15 draw ops each for rich detail. characterId MUST match.
 - Crime scene: body outline 48×64 (use lines for limbs + circle for head), 1-2 scene markers 16×16 (blood, chemical spill, scorch marks — whatever fits the specific crime), barrier 64×8. Make them visceral and setting-appropriate.
