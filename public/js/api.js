@@ -130,9 +130,58 @@ export class GameAPI {
     return res.json();
   }
 
-  async advanceDay() {
+  async advanceDay(onConversation) {
     const res = await fetch(`${this.baseUrl}/api/day/advance`, { method: 'POST' });
+    // 409 = night already in progress (duplicate request) — treat as no-op
+    if (res.status === 409) {
+      console.warn('[API] Night transition already in progress, ignoring');
+      return { timeOfDay: 'night', conversations: [], duplicate: true };
+    }
     if (!res.ok) throw new Error(`Failed to advance day (${res.status})`);
+
+    const contentType = res.headers.get('content-type') || '';
+
+    // Night phase returns SSE stream with conversations
+    if (contentType.includes('text/event-stream')) {
+      return new Promise((resolve, reject) => {
+        const conversations = [];
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        function processChunk({ done, value }) {
+          if (done) {
+            // If we never got a 'done' event, return what we have
+            resolve({ timeOfDay: 'night', conversations });
+            return;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop(); // keep incomplete line in buffer
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const event = JSON.parse(line.slice(6));
+              if (event.type === 'conversation') {
+                conversations.push(event.conversation);
+                if (onConversation) onConversation(event.conversation);
+              } else if (event.type === 'status' && onConversation) {
+                // Status updates can be used for UI feedback
+              } else if (event.type === 'done') {
+                resolve({ ...event, conversations: event.conversations || conversations });
+                return;
+              }
+            } catch {}
+          }
+          reader.read().then(processChunk).catch(reject);
+        }
+
+        reader.read().then(processChunk).catch(reject);
+      });
+    }
+
+    // Day phase returns JSON normally
     return res.json();
   }
 

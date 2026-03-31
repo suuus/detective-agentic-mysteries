@@ -110,7 +110,7 @@ This case has MULTIPLE storylines beyond the murder. Use them to create red herr
 === YOUR ROLE ===
 When night falls, you must decide:
 
-1. **WHO TALKS TO WHOM** — With 11 NPCs, create 3-5 conversation pairs per night. Consider:
+1. **WHO TALKS TO WHOM** — With 11 NPCs, create 2-3 conversation pairs per night. Consider:
    - Allies checking in (Isabelle+Lydia about their escape plan, Volkov+Diego about damage control)
    - Suspicious characters confronting each other (Okafor questioning Harrington's alibi gap, Sofia confronting Vasquez)
    - Information trading (Yuki offering Diego a deal, Wells pressuring Harrington)

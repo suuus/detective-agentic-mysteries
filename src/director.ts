@@ -293,8 +293,13 @@ export function createDirectorTools(gameState: GameStateManager) {
         }
       }
 
+      // Ignore duplicate calls — Director model sometimes calls this tool twice
+      if (gameState.getDirectorPlan()) {
+        return { success: true, message: 'Night plan already submitted (ignoring duplicate).' };
+      }
+
       gameState.setDirectorPlan({
-        conversations: (plan.conversations || []).map((c: any) => ({
+        conversations: (plan.conversations || []).slice(0, 3).map((c: any) => ({
           ids: c.participant_ids as [string, string],
           location: c.location,
           scenario: c.scenario,

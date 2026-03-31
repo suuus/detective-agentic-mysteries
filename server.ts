@@ -318,16 +318,23 @@ async function getNarratorSession(): Promise<CopilotSession> {
 }
 
 async function narrate(trigger: string, context: string): Promise<string> {
-  try {
-    const narrator = await getNarratorSession();
-    const result = await narrator.sendAndWait({
-      prompt: `[${trigger}] ${context}`
-    }, 15_000);
-    return result?.data?.content ?? "";
-  } catch (err: any) {
-    console.error("Narrator failed:", err.message);
-    return "";
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const narrator = await getNarratorSession();
+      const result = await narrator.sendAndWait({
+        prompt: `[${trigger}] ${context}`
+      }, 45_000);
+      return result?.data?.content ?? "";
+    } catch (err: any) {
+      console.error(`Narrator attempt ${attempt} failed:`, err.message);
+      // Recreate session on failure (stale or stuck)
+      try { if (narratorSession) await narratorSession.abort(); } catch {}
+      try { if (narratorSession) await narratorSession.disconnect(); } catch {}
+      narratorSession = null;
+      if (attempt === 2) return "";
+    }
   }
+  return "";
 }
 
 // ── Gossip spreading ─────────────────────────────────────────────
@@ -398,9 +405,13 @@ Based on the exchange, the detective's approach, and ${charName}'s current emoti
 - Would this exchange change how ${charName} feels about the detective?
 
 Call update_npc_emotion with your assessment. If nothing emotionally significant happened, confirm the current state.`
-    }, 20_000);
+    }, 45_000);
   } catch (err: any) {
     console.warn("🧠 Psychologist analysis failed:", err.message);
+    // Recreate session on failure (stale or stuck)
+    try { if (psychologistSession) await psychologistSession.abort(); } catch {}
+    try { if (psychologistSession) await psychologistSession.disconnect(); } catch {}
+    psychologistSession = null;
   }
 }
 
@@ -425,9 +436,13 @@ Being confronted with physical evidence is psychologically significant. Consider
 - Evidence confrontation typically increases anxiety and reduces trust in the detective
 
 Call update_npc_emotion with your assessment.`
-    }, 15_000);
+    }, 45_000);
   } catch (err: any) {
     console.warn("🧠 Evidence emotion analysis failed:", err.message);
+    // Recreate session on failure
+    try { if (psychologistSession) await psychologistSession.abort(); } catch {}
+    try { if (psychologistSession) await psychologistSession.disconnect(); } catch {}
+    psychologistSession = null;
   }
 }
 
@@ -447,7 +462,7 @@ Total questions so far: ${profile.questionCount}. Current style assessment: ${pr
 Previous traits: ${profile.traits.join(', ') || 'none yet'}.
 
 Analyze this question in context of their overall pattern. Update the detective's profile using the update_detective_profile tool.`
-    }, 20_000);
+    }, 45_000);
   } catch (err: any) {
     console.warn("Profile analysis failed:", err.message);
   }
@@ -656,17 +671,21 @@ Produce a BRIEF psychological briefing (3-5 sentences) for the Director who plan
 - Any predicted emotional escalations or breakdowns?
 
 Do NOT call any tools. Just respond with your briefing text.`
-    }, 20_000);
+    }, 45_000);
     psychBriefing = result?.data?.content ?? '';
     if (psychBriefing) {
       console.log(`🧠 Psychologist briefing: ${psychBriefing.slice(0, 120)}...`);
     }
   } catch (err: any) {
     console.warn("🧠 Psychologist briefing failed:", err.message);
+    // Recreate session on failure
+    try { if (psychologistSession) await psychologistSession.abort(); } catch {}
+    try { if (psychologistSession) await psychologistSession.disconnect(); } catch {}
+    psychologistSession = null;
   }
 
   const npcCount = getActiveCharacters().length;
-  const pairCount = npcCount >= 10 ? '4-5' : npcCount >= 6 ? '3-4' : '2-3';
+  const pairCount = npcCount >= 6 ? '3' : '2-3';
 
   const psychSection = psychBriefing
     ? `\n\nPSYCHOLOGIST'S BRIEFING:\n${psychBriefing}\n\nUse this psychological insight to inform which characters should meet tonight and what emotional dynamics will drive their conversations.`
@@ -1386,7 +1405,7 @@ async function sendAndCollect(characterId: string, prompt: string): Promise<stri
   }
 }
 
-async function conductNightConversations(): Promise<NightConversation[]> {
+async function conductNightConversations(onConversation?: (convo: NightConversation) => void): Promise<NightConversation[]> {
   const pairs = gameState.getNightConversationPairs();
   if (pairs.length === 0) return [];
 
@@ -1482,12 +1501,14 @@ This is your last word tonight. Make it count. A warning, a promise, a threat, a
     }
 
     if (exchanges.length > 0) {
-      conversations.push({
+      const convo: NightConversation = {
         participants: [idA, idB],
         participantNames: [nameA, nameB],
         location: pair.location,
         exchanges,
-      });
+      };
+      conversations.push(convo);
+      onConversation?.(convo);
     }
   }
 
@@ -1506,6 +1527,8 @@ app.get("/api/day", (_req, res) => {
   });
 });
 
+let nightInProgress = false;
+
 app.post("/api/day/advance", async (_req, res) => {
   // Night conversations can take several minutes (multiple AI exchanges)
   // Extend timeout to 10 minutes to prevent premature disconnection
@@ -1515,9 +1538,33 @@ app.post("/api/day/advance", async (_req, res) => {
   const currentTime = gameState.getTimeOfDay();
 
   if (currentTime === 'day') {
+    // Prevent concurrent night processing (duplicate requests)
+    if (nightInProgress) {
+      console.warn('⚠️ Night transition already in progress — ignoring duplicate request');
+      res.status(409).json({ error: 'Night transition already in progress' });
+      return;
+    }
+    nightInProgress = true;
+
+    // Use SSE to stream night conversations as they complete
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    // Keepalive ping every 10s to prevent proxy/browser timeout
+    const keepAlive = setInterval(() => {
+      if (!res.writableEnded) res.write(': keepalive\n\n');
+    }, 10_000);
+
+    let clientDisconnected = false;
+    _req.on('close', () => { clientDisconnected = true; clearInterval(keepAlive); });
+
     gameState.advanceToNight();
 
+    try {
     // Step 1: Director plans the night
+    res.write(`data: ${JSON.stringify({ type: 'status', message: 'Director is planning the night...' })}\n\n`);
     await planNight();
 
     // If Director failed, generate fallback conversation pairs from active characters
@@ -1556,22 +1603,31 @@ app.post("/api/day/advance", async (_req, res) => {
       }
     }
 
-    // Step 2: Execute NPC-to-NPC conversations based on Director's plan
+    // Step 2: Execute NPC-to-NPC conversations, streaming each as it completes
     console.log("🌙 Executing night conversations...");
+    res.write(`data: ${JSON.stringify({ type: 'status', message: 'Suspects are talking...' })}\n\n`);
     let conversations: NightConversation[] = [];
     try {
-      conversations = await conductNightConversations();
+      conversations = await conductNightConversations((convo) => {
+        // Stream each completed conversation to the client immediately
+        if (!clientDisconnected) {
+          res.write(`data: ${JSON.stringify({ type: 'conversation', conversation: convo })}\n\n`);
+        }
+      });
       console.log(`✅ ${conversations.length} night conversations completed`);
     } catch (err: any) {
       console.error("❌ Night conversations failed:", err.message);
     }
 
+    clearInterval(keepAlive);
+
+    // Send final event with all conversations (for clients that need the full set)
     console.log(`📤 Sending ${conversations.length} night conversations to client (${conversations.reduce((n, c) => n + c.exchanges.length, 0)} total exchanges)`);
-    res.json({
-      timeOfDay: 'night',
-      message: 'Night has fallen over Blackwood Manor...',
-      conversations,
-    });
+    res.write(`data: ${JSON.stringify({ type: 'done', timeOfDay: 'night', message: 'Night has fallen over Blackwood Manor...', conversations })}\n\n`);
+    res.end();
+    } finally {
+      nightInProgress = false;
+    }
   } else {
     const result = gameState.advanceToNextDay();
 
@@ -2944,6 +3000,7 @@ app.post("/api/reset", async (_req, res) => {
   redHerringActive = false;
   hiddenRoom = null;
   hiddenRoomRevealed = false;
+  nightInProgress = false;
   console.log("🧹 Full reset: all sessions cleared and deleted");
   gameState.reset();
   res.json({ reset: true });

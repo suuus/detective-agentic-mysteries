@@ -307,19 +307,31 @@ export default class RandomManorScene extends Phaser.Scene {
       subtitleEl.textContent = 'The suspects are talking in the shadows' + '.'.repeat(dots);
     }, 500);
 
-    console.log('[Night] Calling advanceDay API...');
+    // Conversations stream in one-by-one as they complete on the server
+    const pendingConversations = [];
+    let resolveNextConvo = null;
+
+    console.log('[Night] Calling advanceDay API (SSE)...');
     let nightResult;
     try {
-      nightResult = await window.gameAPI.advanceDay();
-      console.log('[Night] advanceDay returned:', nightResult?.timeOfDay, 'conversations:', nightResult?.conversations?.length ?? 0);
+      nightResult = await window.gameAPI.advanceDay((convo) => {
+        console.log(`[Night] Streamed conversation: ${convo.participantNames?.join(' & ')}`);
+        pendingConversations.push(convo);
+        if (resolveNextConvo) { resolveNextConvo(); resolveNextConvo = null; }
+      });
+      console.log('[Night] advanceDay stream complete, conversations:', nightResult?.conversations?.length ?? 0);
     } catch(err) {
       console.error('[Night] advanceDay FAILED:', err);
-      subtitleEl.textContent = 'Connection lost — click to continue to dawn...';
     }
+    if (resolveNextConvo) { resolveNextConvo(); resolveNextConvo = null; }
 
     clearInterval(dotInterval);
 
-    const conversations = nightResult?.conversations ?? [];
+    // Use streamed conversations (fall back to final result if streaming missed some)
+    const conversations = pendingConversations.length > 0
+      ? pendingConversations
+      : (nightResult?.conversations ?? []);
+
     if (conversations.length === 0) {
       console.warn('[Night] No conversations received from server');
       subtitleEl.textContent = 'The night passes quietly...';
@@ -335,6 +347,7 @@ export default class RandomManorScene extends Phaser.Scene {
       });
     }
 
+    // Display each conversation with click-to-advance
     for (let ci = 0; ci < conversations.length; ci++) {
       const convo = conversations[ci];
       console.log(`[Night] Showing conversation ${ci+1}/${conversations.length}: ${convo.participantNames?.join(' & ')}`);

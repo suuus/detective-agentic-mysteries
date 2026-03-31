@@ -575,12 +575,12 @@ export class GameStateManager {
   getNightConversationPairs(): NightConversationPair[] {
     // Prefer Director's dynamic plan
     if (this.directorPlan && this.directorPlan.conversations.length > 0) {
-      return this.directorPlan.conversations;
+      return this.directorPlan.conversations.slice(0, 3);
     }
     // Fallback to hardcoded pairs
     const nightIdx = this.state.currentDay - 1; // night after day 1 = index 0
     if (nightIdx < 0 || nightIdx >= NIGHT_CONVERSATION_PAIRS.length) return [];
-    return NIGHT_CONVERSATION_PAIRS[nightIdx];
+    return NIGHT_CONVERSATION_PAIRS[nightIdx].slice(0, 3);
   }
 
   getInvestigationSummary(): string {
