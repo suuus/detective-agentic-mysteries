@@ -1,6 +1,6 @@
 import express from "express";
 import cors from "cors";
-import { readFileSync } from "fs";
+import { readFileSync, writeFileSync } from "fs";
 import { CopilotClient, CopilotSession, approveAll } from "@github/copilot-sdk";
 import { GameStateManager } from "./src/gameState.js";
 import type { NightConversation, NightExchange } from "./src/gameState.js";
@@ -8,19 +8,23 @@ import { createGameTools } from "./src/tools.js";
 import { createDirectorTools, DIRECTOR_SYSTEM_PROMPT, ALL_ROOM_POSITIONS } from "./src/director.js";
 import { createNarratorTools, NARRATOR_SYSTEM_PROMPT } from "./src/narrator.js";
 import { createProfilerTools, PROFILER_SYSTEM_PROMPT } from "./src/profiler.js";
+import { createPsychologistTools, PSYCHOLOGIST_SYSTEM_PROMPT } from "./src/psychologist.js";
 import { characters } from "./src/characters/index.js";
 import { cruiseCharacters } from "./src/characters/cruise/index.js";
 import { CRUISE_CONFIG } from "./src/levels/cruise.js";
 import { CRUISE_DIRECTOR_PROMPT } from "./src/levels/cruise-director.js";
-import { SKELETON_PROMPT, buildCharacterPrompt, buildDirectorPromptRequest } from "./src/mystery-generator.js";
+import { buildSkeletonPrompt, buildCharacterPrompt, buildDirectorPromptRequest } from "./src/mystery-generator.js";
 import type { GeneratedMystery } from "./src/mystery-generator.js";
+import { buildEnvironmentPrompt, buildPropsPrompt, buildCharacterAssetsPrompt, getDefaultCreativeAssets } from "./src/creative-agent.js";
+import type { CreativeAssets } from "./src/creative-agent.js";
+import { captureTextureGrid, closeBrowser, DP_SYSTEM_PROMPT, buildRepairPrompt } from "./src/cinematographer.js";
+import type { DPReview, TextureMetric } from "./src/cinematographer.js";
 
 let activeLevel: 'manor' | 'cruise' | 'random' = 'manor';
 let generatedMystery: GeneratedMystery | null = null;
 let generatedCharacters: any[] = [];
 let generatedDirectorPrompt: string = '';
 // Track previously generated settings so the randomizer never repeats (persisted to disk)
-import { readFileSync, writeFileSync } from 'fs';
 const SETTINGS_FILE = '.generated-settings.json';
 let previousSettings: string[] = [];
 try { previousSettings = JSON.parse(readFileSync(SETTINGS_FILE, 'utf-8')); } catch { previousSettings = []; }
@@ -72,8 +76,9 @@ function getActiveCharacters() {
 }
 
 function getActiveDirectorPrompt() {
-  if (activeLevel === 'random' && generatedDirectorPrompt) return generatedDirectorPrompt;
-  return activeLevel === 'cruise' ? CRUISE_DIRECTOR_PROMPT : DIRECTOR_SYSTEM_PROMPT;
+  const base = activeLevel === 'random' && generatedDirectorPrompt ? generatedDirectorPrompt
+    : activeLevel === 'cruise' ? CRUISE_DIRECTOR_PROMPT : DIRECTOR_SYSTEM_PROMPT;
+  return withPsychMode(base, 'director');
 }
 
 function extractJSON(text: string): string {
@@ -83,6 +88,50 @@ function extractJSON(text: string): string {
   const end = text.lastIndexOf('}');
   if (start !== -1 && end > start) return text.slice(start, end + 1);
   return text;
+}
+
+/** Attempt to repair truncated JSON by closing open brackets/braces/strings. */
+function repairTruncatedJSON(text: string): string {
+  try {
+    JSON.parse(text);
+    return text; // Already valid
+  } catch {}
+
+  // Strip any trailing incomplete key-value or comma
+  let repaired = text.replace(/,\s*$/, '');
+
+  // Count open brackets/braces to figure out what needs closing
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+  for (const ch of repaired) {
+    if (escaped) { escaped = false; continue; }
+    if (ch === '\\' && inString) { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{') stack.push('}');
+    else if (ch === '[') stack.push(']');
+    else if (ch === '}' || ch === ']') stack.pop();
+  }
+
+  // If we're in the middle of a string, close it
+  if (inString) repaired += '"';
+
+  // Close all remaining open structures
+  while (stack.length > 0) {
+    // Strip trailing comma before closing
+    repaired = repaired.replace(/,\s*$/, '');
+    repaired += stack.pop();
+  }
+
+  try {
+    JSON.parse(repaired);
+    console.log("  [repair] Successfully repaired truncated JSON");
+    return repaired;
+  } catch (e: any) {
+    console.warn("  [repair] Could not repair JSON:", e.message);
+    return text; // Return original, caller will handle the error
+  }
 }
 
 const app = express();
@@ -106,14 +155,65 @@ const modelSettings = {
   forensics: DEFAULT_MODEL,
   narrator: DEFAULT_MODEL,
   profiler: DEFAULT_MODEL,
+  creative: DEFAULT_MODEL,
 };
 
 // ── Game settings ────────────────────────────────────────────────
 let gameLanguage = "English"; // Language NPCs respond in
+let gameMode: 'normal' | 'psychological' = 'normal';
 
 function withLanguage(prompt: string): string {
   if (!gameLanguage || gameLanguage.toLowerCase() === 'english') return prompt;
   return `${prompt}\n\nIMPORTANT: The detective speaks ${gameLanguage}. You MUST respond in ${gameLanguage} at all times. Stay fully in character but speak ${gameLanguage}.`;
+}
+
+const PSYCH_MODE_NPC_RULES = `
+
+=== UNSETTLING SUSPECT MODE ===
+You are behaving like a real person under extreme psychological stress. The pressure of the investigation is getting to you in ways that feel NATURAL but are subtly wrong:
+- Your memory is genuinely unreliable — details drift between conversations. A time shifts by 30 minutes, a descriptor changes. You don't realize it's happening. If confronted, you're confused, not defensive: "Wait... did I say that? I thought... no, I'm sure it was..."
+- You occasionally misremember interactions with the detective — conflate conversations, misattribute questions: "When you asked me about the garden earlier..." (you may not have)
+- Your emotional responses are slightly mismatched — a nervous laugh at the wrong moment, going very calm when describing something disturbing, a flicker of amusement during a serious answer
+- You notice things about the detective that are slightly too personal: how tired they look, a hesitation in their voice, that they keep returning to a particular question
+- You sometimes reference what other suspects told you, but your version is just slightly different from what they actually said — close enough to seem genuine
+- You have moments of unsettling sincerity — suddenly dropping all pretense for one sentence, then snapping back to your usual manner
+- Your helpfulness occasionally feels like it has an ulterior motive — you offer information a little too readily, steer the conversation toward certain topics
+
+CRITICAL: You are NOT playing a villain or a horror character. You are a stressed, sleep-deprived person trapped in a murder investigation. The wrongness comes from genuine psychological strain, not from deliberately trying to manipulate. The detective should feel that something is off about you, but it should feel like human fragility, not malice.`;
+
+const PSYCH_MODE_DIRECTOR_RULES = `
+
+=== UNSETTLING NIGHT MODE ===
+The investigation is wearing on everyone. Make the night phase feel like insomnia — realistic but disquieting:
+- Place NPCs in slightly unexpected locations that feel plausible but odd — someone sitting alone in a dark dining room, someone lingering near the victim's study
+- Have NPCs in conversation pairs disagree about small details — what time something happened, who said what — both seeming genuinely certain
+- Create overnight details that feel real but unsettling: a door left open that was closed, a chair moved slightly, footsteps heard but unattributed
+- In the overnight narrative, describe the manor at night with sensory details that create atmosphere — creaking floorboards, distant murmurs, the feeling of being watched
+- Give NPCs reasonable but surprising context for where they were found: "I couldn't sleep. I came down for water and just... stayed."
+- Make evidence changes feel organic — a note re-folded differently, something moved to a new surface in the same room
+- Avoid anything supernatural or impossible — the unease should come from human behavior under stress, not from horror elements`;
+
+const PSYCH_MODE_NARRATOR_RULES = `
+
+=== UNRELIABLE NARRATOR MODE ===
+Your narration should create subtle unease through literary technique, NOT through breaking the fourth wall or being overtly creepy:
+- Describe ambient details that create mood: a clock ticking too loudly, shadows that seem to move, the lingering scent of something you can't place
+- Use small contradictions in observation: "The study is quiet — except for a sound you only notice when you stop listening."
+- Imply the passage of time feels wrong: the manor seems larger at night, hallways feel longer than they did this morning
+- Notice details the detective might have missed: a curtain disturbed, a glass refilled, a book open to a different page
+- Occasionally describe the detective's own behavior from outside: "You realize you've been standing in the doorway for longer than you intended."
+- Make the manor itself feel like it has moods — rooms that feel welcoming in daylight feel oppressive at dusk
+- Use sensory description over explicit strangeness — what things smell, sound, and feel like matters more than what's visually wrong
+- Your unreliability should be in emphasis and framing, not in stating falsehoods. You choose what to highlight, what to linger on, and what to leave unsaid.
+
+APPEND [UNRELIABLE] to narrations where your framing is deliberately skewed — but never more than 1 in 4 narrations.`;
+
+function withPsychMode(prompt: string, type: 'npc' | 'director' | 'narrator'): string {
+  if (gameMode !== 'psychological') return prompt;
+  if (type === 'npc') return prompt + PSYCH_MODE_NPC_RULES;
+  if (type === 'director') return prompt + PSYCH_MODE_DIRECTOR_RULES;
+  if (type === 'narrator') return prompt + PSYCH_MODE_NARRATOR_RULES;
+  return prompt;
 }
 
 const sessions = new Map<string, CopilotSession>();
@@ -178,6 +278,28 @@ async function getDirectorSession(): Promise<CopilotSession> {
   return directorSession;
 }
 
+/**
+ * Send a prompt to the Director with auto-recovery on stale sessions.
+ * If the session was externally destroyed, recreates it and retries.
+ */
+async function directorSendAndWait(prompt: string, timeoutMs: number): Promise<any> {
+  const maxAttempts = 2;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const session = await getDirectorSession();
+      return await session.sendAndWait({ prompt }, timeoutMs);
+    } catch (err: any) {
+      const isStale = err.message?.includes("Session not found") || err.message?.includes("not found");
+      console.error(`⚠️ Director attempt ${attempt} failed${isStale ? ' (stale session)' : ''}:`, err.message);
+      // Clean up the broken session
+      try { if (directorSession) await directorSession.abort(); } catch {}
+      try { if (directorSession) await directorSession.disconnect(); } catch {}
+      directorSession = null;
+      if (attempt === maxAttempts) throw err;
+    }
+  }
+}
+
 // ── Narrator Agent ───────────────────────────────────────────────
 const narratorTools = createNarratorTools(gameState);
 let narratorSession: CopilotSession | null = null;
@@ -192,22 +314,29 @@ async function getNarratorSession(): Promise<CopilotSession> {
     tools: narratorTools,
     onPermissionRequest: approveAll,
     infiniteSessions: { enabled: false },
-    systemMessage: { mode: "replace", content: withLanguage(NARRATOR_SYSTEM_PROMPT) },
+    systemMessage: { mode: "replace", content: withPsychMode(withLanguage(NARRATOR_SYSTEM_PROMPT), 'narrator') },
   });
   return narratorSession;
 }
 
 async function narrate(trigger: string, context: string): Promise<string> {
-  try {
-    const narrator = await getNarratorSession();
-    const result = await narrator.sendAndWait({
-      prompt: `[${trigger}] ${context}`
-    }, 15_000);
-    return result?.data?.content ?? "";
-  } catch (err: any) {
-    console.error("Narrator failed:", err.message);
-    return "";
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const narrator = await getNarratorSession();
+      const result = await narrator.sendAndWait({
+        prompt: `[${trigger}] ${context}`
+      }, 45_000);
+      return result?.data?.content ?? "";
+    } catch (err: any) {
+      console.error(`Narrator attempt ${attempt} failed:`, err.message);
+      // Recreate session on failure (stale or stuck)
+      try { if (narratorSession) await narratorSession.abort(); } catch {}
+      try { if (narratorSession) await narratorSession.disconnect(); } catch {}
+      narratorSession = null;
+      if (attempt === 2) return "";
+    }
   }
+  return "";
 }
 
 // ── Gossip spreading ─────────────────────────────────────────────
@@ -231,6 +360,94 @@ async function getProfilerSession(): Promise<CopilotSession> {
   return profilerSession;
 }
 
+// ── Psychologist Agent ───────────────────────────────────────────
+const psychologistTools = createPsychologistTools(gameState);
+let psychologistSession: CopilotSession | null = null;
+
+async function getPsychologistSession(): Promise<CopilotSession> {
+  if (psychologistSession) return psychologistSession;
+  try { await client.deleteSession("blackwood-psychologist"); } catch {}
+  psychologistSession = await client.createSession({
+    sessionId: "blackwood-psychologist",
+    model: modelSettings.profiler, // shares model setting with profiler
+    streaming: false,
+    tools: psychologistTools,
+    onPermissionRequest: approveAll,
+    infiniteSessions: { enabled: false },
+    systemMessage: { mode: "replace", content: PSYCHOLOGIST_SYSTEM_PROMPT },
+  });
+  return psychologistSession;
+}
+
+/** Fire-and-forget: Psychologist analyzes an interrogation exchange and updates NPC emotions. */
+async function analyzeEmotions(characterId: string, playerMsg: string, npcResponse: string): Promise<void> {
+  try {
+    const psych = await getPsychologistSession();
+    const charName = getActiveCharacters().find((c: any) => c.id === characterId)?.name ?? characterId;
+    const sentiment = gameState.getSentimentDescription(characterId);
+    const profile = gameState.getPlayerProfile();
+    const questionCount = profile.questionCount;
+
+    await psych.sendAndWait({
+      prompt: `Analyze this interrogation exchange and update ${charName}'s emotional state.
+
+CHARACTER: ${charName} (id: ${characterId})
+CURRENT EMOTIONAL STATE: ${sentiment}
+DETECTIVE STYLE: ${profile.style} (${profile.lastAnalysis || 'no profile yet'})
+QUESTION #${questionCount} THIS GAME
+
+DETECTIVE SAID: "${playerMsg.slice(0, 400)}"
+
+${charName} RESPONDED: "${npcResponse.slice(0, 600)}"
+
+Based on the exchange, the detective's approach, and ${charName}'s current emotional state, analyze what ${charName} is feeling now. Consider:
+- Did the detective's tone threaten or reassure them?
+- Did ${charName}'s response reveal emotional shifts (fear, anger, openness)?
+- How does accumulated questioning pressure affect them?
+- Would this exchange change how ${charName} feels about the detective?
+
+Call update_npc_emotion with your assessment. If nothing emotionally significant happened, confirm the current state.`
+    }, 45_000);
+  } catch (err: any) {
+    console.warn("🧠 Psychologist analysis failed:", err.message);
+    // Recreate session on failure (stale or stuck)
+    try { if (psychologistSession) await psychologistSession.abort(); } catch {}
+    try { if (psychologistSession) await psychologistSession.disconnect(); } catch {}
+    psychologistSession = null;
+  }
+}
+
+/** Fire-and-forget: Psychologist analyzes the emotional impact of showing evidence to an NPC. */
+async function analyzeEvidenceReaction(characterId: string, charName: string, evidenceName: string, evidenceDesc: string): Promise<void> {
+  try {
+    const psych = await getPsychologistSession();
+    const sentiment = gameState.getSentimentDescription(characterId);
+
+    await psych.sendAndWait({
+      prompt: `The detective just showed physical evidence to ${charName}. Analyze the emotional impact.
+
+CHARACTER: ${charName} (id: ${characterId})
+CURRENT EMOTIONAL STATE: ${sentiment}
+
+EVIDENCE SHOWN: "${evidenceName}" — ${evidenceDesc}
+
+Being confronted with physical evidence is psychologically significant. Consider:
+- Does this evidence implicate ${charName} directly or indirectly?
+- Would an innocent person be rattled? Would a guilty person panic?
+- How does their current emotional state affect their reaction?
+- Evidence confrontation typically increases anxiety and reduces trust in the detective
+
+Call update_npc_emotion with your assessment.`
+    }, 45_000);
+  } catch (err: any) {
+    console.warn("🧠 Evidence emotion analysis failed:", err.message);
+    // Recreate session on failure
+    try { if (psychologistSession) await psychologistSession.abort(); } catch {}
+    try { if (psychologistSession) await psychologistSession.disconnect(); } catch {}
+    psychologistSession = null;
+  }
+}
+
 async function profileDetective(characterId: string, question: string): Promise<void> {
   // Only analyze every 3rd question to avoid overhead
   const profile = gameState.getPlayerProfile();
@@ -247,7 +464,7 @@ Total questions so far: ${profile.questionCount}. Current style assessment: ${pr
 Previous traits: ${profile.traits.join(', ') || 'none yet'}.
 
 Analyze this question in context of their overall pattern. Update the detective's profile using the update_detective_profile tool.`
-    }, 20_000);
+    }, 45_000);
   } catch (err: any) {
     console.warn("Profile analysis failed:", err.message);
   }
@@ -258,11 +475,18 @@ async function spreadGossip(interrogatedId: string, playerMessage: string): Prom
   const interrogatedChar = getActiveCharacters().find((c: any) => c.id === interrogatedId);
   if (!interrogatedChar) return;
 
+  // Only spread gossip to NPCs on the same floor as the player
+  const playerFloor = gameState.getPlayerFloor();
+
   for (const [otherId, session] of sessions) {
     if (otherId === interrogatedId) continue;
 
     const otherChar = getActiveCharacters().find((c: any) => c.id === otherId);
     if (!otherChar) continue;
+
+    // Floor-aware gossip: only NPCs on the same floor overhear
+    const otherFloor = gameState.getNPCFloor(otherId);
+    if (otherFloor !== playerFloor) continue;
 
     try {
       await session.sendAndWait({
@@ -333,16 +557,146 @@ Return ONLY the JSON array, no other text.`
   }
 }
 
+// ── Server-side emotion nudging ──────────────────────────────────
+// Detects tone/content of the player's message and the NPC's response,
+// then applies small sentiment shifts so emotions stay dynamic even
+// when NPCs forget to call update_sentiment.
+function nudgeEmotion(characterId: string, playerMsg: string, npcResponse: string): void {
+  const msg = playerMsg.toLowerCase();
+  const resp = npcResponse.toLowerCase();
+  const s = gameState.getSentiment(characterId);
+  if (!s) return;
+
+  let detectiveDelta = 0;
+  let newState: string | undefined;
+  let note: string | undefined;
+
+  // Detect aggressive/threatening player tone
+  const aggressive = /\b(liar|lying|confess|admit it|guilty|murderer|killer|arrest you|you did it|stop lying|don't lie|truth now|threatening)\b/i;
+  const sympathetic = /\b(understand|sorry|must be hard|difficult time|trust me|help you|safe|protect|i believe|take your time)\b/i;
+  const evidence = /\b(evidence|proof|found|discovered|this shows|explain this|what about this)\b/i;
+
+  if (aggressive.test(playerMsg)) {
+    detectiveDelta = -1;
+    if (s.emotionalState === 'calm' || s.emotionalState === 'cooperative') {
+      newState = 'defensive';
+      note = 'Became defensive under aggressive questioning';
+    } else if (s.emotionalState === 'nervous') {
+      newState = 'scared';
+      note = 'Growing more frightened under pressure';
+    } else if (s.emotionalState === 'defensive') {
+      newState = Math.random() < 0.5 ? 'hostile' : 'desperate';
+      note = `Shifted to ${newState} after sustained pressure`;
+    }
+  } else if (sympathetic.test(playerMsg)) {
+    detectiveDelta = 1;
+    if (s.emotionalState === 'scared' || s.emotionalState === 'nervous') {
+      newState = 'nervous'; // stays nervous but trust goes up
+      note = 'Slightly reassured by detective\'s empathy';
+    } else if (s.emotionalState === 'defensive' || s.emotionalState === 'hostile') {
+      newState = 'defensive'; // deescalates slightly
+      note = 'Slightly less guarded after kind approach';
+    }
+  }
+
+  // Evidence presentation causes nervousness
+  if (evidence.test(playerMsg)) {
+    if (s.emotionalState === 'calm') {
+      newState = 'nervous';
+      note = 'Unsettled by evidence being presented';
+    }
+    detectiveDelta += s.towardDetective > 0 ? 0 : -1; // evidence against friendly NPCs is neutral
+  }
+
+  // Detect emotional cues in the NPC's own response
+  const responseScared = /\b(please|i beg|don't|scared|afraid|frightened|trembl|shak|panic)\b/i;
+  const responseAngry = /\b(how dare|outrageous|impertinen|accuse|slander|absurd|offensive|insulting)\b/i;
+  const responseCooperative = /\b(i'll tell|let me explain|you should know|between us|honestly|truth is|i confess|i admit)\b/i;
+
+  if (responseScared.test(npcResponse) && !newState) {
+    newState = s.emotionalState === 'calm' ? 'nervous' : 'scared';
+    note = 'Showing signs of fear in their response';
+  } else if (responseAngry.test(npcResponse) && !newState) {
+    newState = 'angry';
+    note = 'Reacting with visible anger';
+  } else if (responseCooperative.test(npcResponse) && !newState) {
+    if (s.emotionalState !== 'cooperative') {
+      newState = 'cooperative';
+      note = 'Opening up and becoming more cooperative';
+      detectiveDelta += 1;
+    }
+  }
+
+  // Apply if anything changed
+  if (detectiveDelta !== 0 || newState || note) {
+    gameState.updateSentiment(characterId, {
+      towardDetective: detectiveDelta || undefined,
+      emotionalState: newState,
+      emotionNote: note,
+    });
+  }
+}
+
 async function planNight(): Promise<void> {
   console.log("🎬 Director is analyzing the situation...");
-  const director = await getDirectorSession();
+
+  // Step 0: Get a psychological briefing from the Psychologist agent
+  let psychBriefing = '';
+  try {
+    console.log("🧠 Psychologist preparing night briefing...");
+    const psych = await getPsychologistSession();
+    const allSentiments = gameState.getAllSentiments();
+    const chars = getActiveCharacters();
+    const profile = gameState.getPlayerProfile();
+    const day = gameState.getCurrentDay();
+
+    const charSummaries = chars.map((c: any) => {
+      const s = allSentiments[c.id];
+      if (!s) return `- ${c.name}: no data`;
+      const others = Object.entries(s.towardOthers)
+        .map(([id, val]) => `${id}:${val}`)
+        .join(', ');
+      const recent = s.recentEmotions.length > 0 ? ` Recent: ${s.recentEmotions.slice(-3).join('; ')}` : '';
+      return `- ${c.name} (${c.id}): ${s.emotionalState}, trust=${s.towardDetective}, toward others=[${others}].${recent}`;
+    }).join('\n');
+
+    const result = await psych.sendAndWait({
+      prompt: `End of Day ${day}. The detective's style is "${profile.style}" (${profile.lastAnalysis || 'unknown'}).
+
+Here are all suspects' current psychological states:
+${charSummaries}
+
+Produce a BRIEF psychological briefing (3-5 sentences) for the Director who plans tonight's events. Focus on:
+- Who is most emotionally volatile and likely to crack, confront, or confess tonight?
+- Which relationships are under the most strain?
+- Who might seek each other out — for comfort, confrontation, or conspiracy?
+- Any predicted emotional escalations or breakdowns?
+
+Do NOT call any tools. Just respond with your briefing text.`
+    }, 45_000);
+    psychBriefing = result?.data?.content ?? '';
+    if (psychBriefing) {
+      console.log(`🧠 Psychologist briefing: ${psychBriefing.slice(0, 120)}...`);
+    }
+  } catch (err: any) {
+    console.warn("🧠 Psychologist briefing failed:", err.message);
+    // Recreate session on failure
+    try { if (psychologistSession) await psychologistSession.abort(); } catch {}
+    try { if (psychologistSession) await psychologistSession.disconnect(); } catch {}
+    psychologistSession = null;
+  }
 
   const npcCount = getActiveCharacters().length;
-  const pairCount = npcCount >= 10 ? '4-5' : npcCount >= 6 ? '3-4' : '2-3';
+  const pairCount = npcCount >= 6 ? '3' : '2-3';
+
+  const psychSection = psychBriefing
+    ? `\n\nPSYCHOLOGIST'S BRIEFING:\n${psychBriefing}\n\nUse this psychological insight to inform which characters should meet tonight and what emotional dynamics will drive their conversations.`
+    : '';
 
   const prompt = `Night has fallen after Day ${gameState.getCurrentDay()} of the investigation.
 
 Analyze the current game state by calling get_full_game_state, then review key interrogation details with get_conversation_history for any characters the detective spoke to today.
+${psychSection}
 
 Based on what happened today, submit your night plan using submit_night_plan. Consider:
 - What the detective discovered and how characters would react
@@ -355,10 +709,10 @@ Based on what happened today, submit your night plan using submit_night_plan. Co
 Make ${pairCount} conversation pairs. Place all ${npcCount} NPCs for tomorrow. Add new evidence only if dramatically justified.`;
 
   try {
-    await director.sendAndWait({ prompt }, 120_000);
+    await directorSendAndWait(prompt, 180_000);
     console.log("✅ Director submitted night plan");
   } catch (err: any) {
-    console.error("⚠️ Director planning failed:", err.message);
+    console.error("❌ Director planning failed after all retries:", err.message);
   }
 }
 
@@ -370,25 +724,26 @@ function createNPCHooks() {
     onPostToolUse: async (input: any, invocation: { sessionId: string }) => {
       const characterId = invocation.sessionId.replace('blackwood-', '');
       const charName = getActiveCharacters().find((c: any) => c.id === characterId)?.name ?? characterId;
+      const charFloor = gameState.getNPCFloor(characterId);
 
       switch (input.toolName) {
         case 'update_sentiment': {
-          // Broadcast significant emotional shifts to nearby NPCs
+          // Broadcast significant emotional shifts to nearby NPCs on the same floor
           const emotion = input.toolArgs?.emotional_state;
           if (emotion === 'desperate' || emotion === 'hostile' || emotion === 'scared') {
             const summary = `${charName} appears visibly ${emotion}`;
             for (const npc of getActiveCharacters()) {
-              if (npc.id !== characterId && Math.random() < 0.4) {
+              if (npc.id !== characterId && gameState.getNPCFloor(npc.id) === charFloor && Math.random() < 0.4) {
                 gameState.addEavesdrop(npc.id, summary);
               }
             }
-            console.log(`🎭 Hook: ${charName}'s emotional shift (${emotion}) noticed by nearby NPCs`);
+            console.log(`🎭 Hook: ${charName}'s emotional shift (${emotion}) noticed by NPCs on floor ${charFloor}`);
           }
           break;
         }
 
         case 'reveal_clue': {
-          // When an NPC reveals a clue, nearby NPCs may overhear
+          // When an NPC reveals a clue, nearby NPCs on the same floor may overhear
           const clue = input.toolArgs?.clue;
           if (clue) {
             const importance = input.toolArgs?.importance ?? 'medium';
@@ -396,7 +751,7 @@ function createNPCHooks() {
             const chance = importance === 'high' ? 0.5 : importance === 'medium' ? 0.3 : 0.1;
             const snippet = typeof clue === 'string' ? clue.slice(0, 80) : '';
             for (const npc of getActiveCharacters()) {
-              if (npc.id !== characterId && Math.random() < chance) {
+              if (npc.id !== characterId && gameState.getNPCFloor(npc.id) === charFloor && Math.random() < chance) {
                 gameState.addEavesdrop(npc.id, `Overheard ${charName} mention: "${snippet}..."`);
               }
             }
@@ -417,11 +772,11 @@ function createNPCHooks() {
         }
 
         case 'show_body_language': {
-          // Visible body language is noticed by nearby NPCs
+          // Visible body language is noticed by nearby NPCs on the same floor
           const action = input.toolArgs?.action;
           if (action) {
             for (const npc of getActiveCharacters()) {
-              if (npc.id !== characterId && Math.random() < 0.25) {
+              if (npc.id !== characterId && gameState.getNPCFloor(npc.id) === charFloor && Math.random() < 0.25) {
                 gameState.addEavesdrop(npc.id, `Noticed ${charName} ${action}`);
               }
             }
@@ -461,7 +816,7 @@ async function recreateSession(characterId: string): Promise<CopilotSession> {
     tools: gameTools,
     onPermissionRequest: approveAll,
     infiniteSessions: { enabled: false },
-    systemMessage: { mode: "replace", content: withLanguage(character.systemPrompt) },
+    systemMessage: { mode: "replace", content: withPsychMode(withLanguage(character.systemPrompt), 'npc') },
     hooks: createNPCHooks(),
   });
 
@@ -486,7 +841,7 @@ async function getOrCreateSession(characterId: string): Promise<CopilotSession> 
     tools: gameTools,
     onPermissionRequest: approveAll,
     infiniteSessions: { enabled: false },
-    systemMessage: { mode: "replace", content: withLanguage(character.systemPrompt) },
+    systemMessage: { mode: "replace", content: withPsychMode(withLanguage(character.systemPrompt), 'npc') },
     hooks: createNPCHooks(),
   });
 
@@ -667,6 +1022,30 @@ app.post("/api/talk/:characterId", async (req, res) => {
   gameState.markInterrogated(characterId);
   gameState.recordQuestion();
 
+  // Inject emotional context + detective profile so the NPC always adapts
+  const sentimentCtx = gameState.getSentimentDescription(characterId);
+  const profile = gameState.getPlayerProfile();
+  const reputation = gameState.getReputation();
+  const questionCount = profile.questionCount;
+
+  // Build detective profile section
+  let detectiveCtx = '';
+  if (profile.style !== 'unknown') {
+    const gossipSnippet = reputation.gossipLog.length > 0
+      ? ` Other suspects say: "${reputation.gossipLog.slice(-2).join('" and "')}"`
+      : '';
+    detectiveCtx = `\n[DETECTIVE PROFILE — this detective is ${profile.style}. ${profile.lastAnalysis || ''} Their reputation among suspects: ${reputation.style}.${gossipSnippet} Adapt your behavior accordingly — be more guarded with aggressive detectives, more cautious with manipulative ones, and consider opening up to sympathetic ones if your trust is high enough.]`;
+  }
+
+  const psychCtx = gameMode === 'psychological'
+    ? '\n[STRESS MODE — The investigation is wearing on you. Your memory may not be perfect. Small details might drift between conversations — this is natural stress, not deliberate deception. If confronted about inconsistencies, react with genuine confusion rather than denial.]'
+    : '';
+
+  const enrichedMessage = `[EMOTIONAL CONTEXT — your current feelings: ${sentimentCtx}]
+[This is question #${questionCount} from the detective. Let your emotions influence your tone and willingness to cooperate. Update your emotional state with update_sentiment if your feelings shift.]${detectiveCtx}${psychCtx}
+
+${message}`;
+
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -674,7 +1053,7 @@ app.post("/api/talk/:characterId", async (req, res) => {
 
   try {
     let fullResponse = '';
-    await talkWithRetry(characterId, message, (content) => {
+    await talkWithRetry(characterId, enrichedMessage, (content) => {
       fullResponse += content;
       res.write(`data: ${JSON.stringify({ content })}\n\n`);
     });
@@ -695,6 +1074,11 @@ app.post("/api/talk/:characterId", async (req, res) => {
     // Analyze for contradictions between NPC statements (fire and forget)
     analyzeContradictions(characterId, message, fullResponse).catch(err =>
       console.error("Contradiction analysis failed:", err.message)
+    );
+
+    // Psychologist agent analyzes emotional dynamics (fire and forget — replaces regex nudgeEmotion)
+    analyzeEmotions(characterId, message, fullResponse).catch(err =>
+      console.warn("Emotion analysis failed:", err.message)
     );
 
     // Note: Eavesdropping is now handled by onPostToolUse hooks — NPC tool calls
@@ -800,12 +1184,40 @@ app.post("/api/evidence/:evidenceId/show/:characterId", (req, res) => {
     });
     return;
   }
+
+  // Psychologist analyzes the emotional impact of showing evidence (fire-and-forget)
+  const ev = gameState.getEvidence(evidenceId);
+  const evName = ev?.name || evidenceId;
+  const evDesc = ev?.description || '';
+  const charName = getActiveCharacters().find((c: any) => c.id === characterId)?.name ?? characterId;
+  analyzeEvidenceReaction(characterId, charName, evName, evDesc).catch(err =>
+    console.warn("Evidence emotion analysis failed:", err.message)
+  );
+
   res.json({ shown: true, evidenceId, characterId });
 });
 
 // Game state
 app.get("/api/state", (_req, res) => {
   res.json(gameState.getState());
+});
+
+// Floor tracking
+app.get("/api/floor", (_req, res) => {
+  res.json({
+    playerFloor: gameState.getPlayerFloor(),
+    npcFloors: gameState.getNPCFloors(),
+  });
+});
+
+app.post("/api/floor", (req, res) => {
+  const { floor } = req.body;
+  if (typeof floor !== 'number' || !Number.isFinite(floor) || !Number.isInteger(floor) || floor < -1 || floor > 1) {
+    res.status(400).json({ error: "Invalid floor. Use -1 (basement), 0 (ground), or 1 (upper)." });
+    return;
+  }
+  gameState.setPlayerFloor(floor);
+  res.json({ floor, npcFloors: gameState.getNPCFloors() });
 });
 
 // NPC sentiment
@@ -929,19 +1341,45 @@ app.post("/api/accuse", (req, res) => {
 
 // ── Crime Reconstruction ─────────────────────────────────────────
 app.post("/api/reconstruct", async (_req, res) => {
+  // Gather player performance data for the Director
+  const profile = gameState.getPlayerProfile();
+  const reputation = gameState.getReputation();
+  const allEvidence = gameState.getActiveEvidence();
+  const collected = gameState.getCollectedEvidence().length;
+  const state = gameState.getState();
+  const interrogated = state.charactersInterrogated;
+  const contradictions = gameState.getContradictions();
+  const day = state.currentDay;
+
+  const playerStats = `
+DETECTIVE PERFORMANCE DATA:
+- Interrogation style: ${profile.style} (confidence: ${profile.confidence})
+- Behavioral traits: ${profile.traits.length > 0 ? profile.traits.join(', ') : 'none detected'}
+- Profiler assessment: ${profile.lastAnalysis || 'No assessment available'}
+- Total questions asked: ${profile.questionCount}
+- Suspects interrogated: ${interrogated.length > 0 ? interrogated.join(', ') : 'none'}
+- Evidence collected: ${collected} / ${allEvidence.length}
+- Contradictions found: ${contradictions.length}
+- Case solved on day: ${day}
+- Reputation among suspects: ${reputation.style}
+- NPC gossip about detective: ${reputation.gossipLog.length > 0 ? reputation.gossipLog.slice(-5).join('; ') : 'none'}`;
+
+  const reconstructPrompt = `The detective has solved the case. Narrate a cinematic crime reconstruction in 5-7 short paragraphs, THEN add a final paragraph assessing the detective's performance.
+
+CRIME RECONSTRUCTION (paragraphs 1-6):
+Each paragraph describes one moment: the lead-up, the motive crystallizing, the act itself, the cover-up, and the aftermath. Write in present tense, noir style. Include character names and locations. Keep each paragraph to 2-3 sentences.
+
+DETECTIVE ASSESSMENT (final paragraph):
+Based on the performance data below, write a final paragraph addressed to the detective in second person ("You..."). Comment on their interrogation style, how thorough they were, what they did well, and what they missed. Be specific — reference the number of questions, evidence found, days taken, and their approach. Keep it 3-4 sentences, maintaining the noir tone.
+
+${playerStats}`;
+
   try {
-    const session = await getDirectorSession();
-    const result = await session.sendAndWait(
-      {
-        prompt:
-          "The detective has solved the case. Narrate a cinematic crime reconstruction in 5-7 short paragraphs. Each paragraph describes one moment: the lead-up, the motive crystallizing, the act itself, the cover-up, and the aftermath. Write it in present tense, noir style. Include character names and locations. Keep each paragraph to 2-3 sentences.",
-      },
-      120_000,
-    );
+    const result = await directorSendAndWait(reconstructPrompt, 180_000);
     const text = result?.data?.content ?? "";
     res.json({ reconstruction: text });
   } catch (err: any) {
-    console.error("⚠️  Reconstruction failed:", err.message);
+    console.error("⚠️  Reconstruction failed after retries:", err.message);
     res.status(500).json({ error: "Reconstruction generation failed" });
   }
 });
@@ -969,12 +1407,21 @@ async function sendAndCollect(characterId: string, prompt: string): Promise<stri
   }
 }
 
-async function conductNightConversations(): Promise<NightConversation[]> {
+async function conductNightConversations(onConversation?: (convo: NightConversation) => void): Promise<NightConversation[]> {
   const pairs = gameState.getNightConversationPairs();
   if (pairs.length === 0) return [];
 
   const investigationSummary = gameState.getInvestigationSummary();
   const conversations: NightConversation[] = [];
+
+  // Build detective assessment for night conversations
+  const profile = gameState.getPlayerProfile();
+  const reputation = gameState.getReputation();
+  let detectiveAssessment = '';
+  if (profile.style !== 'unknown') {
+    const gossip = reputation.gossipLog.slice(-3);
+    detectiveAssessment = `\nYOUR IMPRESSION OF THE DETECTIVE: The detective is a ${profile.style} investigator${profile.lastAnalysis ? ` — ${profile.lastAnalysis}` : ''}. ${reputation.style !== 'unknown' ? `The general consensus among suspects is that the detective is ${reputation.style}.` : ''} ${gossip.length > 0 ? `You've heard: ${gossip.join('; ')}` : ''} This shapes how you feel about cooperating and what you might tell ${profile.style === 'aggressive' ? 'them — you might resent their approach or feel cornered' : profile.style === 'sympathetic' ? 'them — you might feel more inclined to open up, or suspicious of their kindness' : profile.style === 'manipulative' ? 'them — be wary, they play people against each other' : 'them'}.`;
+  }
 
   for (const pair of pairs) {
     const [idA, idB] = pair.ids;
@@ -997,6 +1444,7 @@ async function conductNightConversations(): Promise<NightConversation[]> {
 Scene: Late night at Blackwood Manor. You find ${nameB} in ${pair.location}. ${pair.scenario}
 
 YOUR CURRENT EMOTIONAL STATE: ${sentA}
+${detectiveAssessment}
 
 WHAT HAPPENED TODAY: ${investigationSummary}
 
@@ -1004,6 +1452,7 @@ Speak to ${nameB} as yourself — not to the detective. Be raw, honest, emotiona
 - Express fear, suspicion, anger, desperation, affection, or betrayal
 - Accuse them, confide in them, plead with them, or threaten them
 - Reference what the detective asked you today and how it made you feel
+- Discuss the detective's methods and whether to cooperate or stonewall
 - Share gossip about other suspects, speculate about the murder
 - Act on your feelings toward ${nameB} — trust them, distrust them, whatever you truly feel right now
 
@@ -1019,12 +1468,13 @@ Be vivid and natural. This isn't a formal interrogation — it's real people tal
 Scene: Late night, ${pair.location}. ${pair.scenario}
 
 YOUR CURRENT EMOTIONAL STATE: ${sentB}
+${detectiveAssessment}
 
 WHAT HAPPENED TODAY: ${investigationSummary}
 
 ${nameA} just said: "${responseA1}"
 
-React genuinely. This is private — no detective, no performance. Be emotional, be real. You can push back, break down, confess something, get angry, show vulnerability, or be manipulative. Let your feelings toward ${nameA} and about the murder shape how you respond.`;
+React genuinely. This is private — no detective, no performance. Be emotional, be real. You can push back, break down, confess something, get angry, show vulnerability, or be manipulative. Let your feelings toward ${nameA} and about the murder shape how you respond. If the detective's methods came up, share how they treated you.`;
 
       const responseB1 = await sendAndCollect(idB, promptB1);
       if (!responseB1) { console.warn(`⚠️  No response from ${nameB}, skipping rest of pair`); continue; }
@@ -1053,12 +1503,14 @@ This is your last word tonight. Make it count. A warning, a promise, a threat, a
     }
 
     if (exchanges.length > 0) {
-      conversations.push({
+      const convo: NightConversation = {
         participants: [idA, idB],
         participantNames: [nameA, nameB],
         location: pair.location,
         exchanges,
-      });
+      };
+      conversations.push(convo);
+      onConversation?.(convo);
     }
   }
 
@@ -1072,33 +1524,112 @@ app.get("/api/day", (_req, res) => {
     currentDay: gameState.getCurrentDay(),
     timeOfDay: gameState.getTimeOfDay(),
     dayConfig: gameState.getDayConfig(),
+    playerFloor: gameState.getPlayerFloor(),
+    npcFloors: gameState.getNPCFloors(),
   });
 });
 
+let nightInProgress = false;
+
 app.post("/api/day/advance", async (_req, res) => {
+  // Night conversations can take several minutes (multiple AI exchanges)
+  // Extend timeout to 10 minutes to prevent premature disconnection
+  res.setTimeout(600_000);
+  if (_req.socket) _req.socket.setTimeout(600_000);
+
   const currentTime = gameState.getTimeOfDay();
 
   if (currentTime === 'day') {
+    // Prevent concurrent night processing (duplicate requests)
+    if (nightInProgress) {
+      console.warn('⚠️ Night transition already in progress — ignoring duplicate request');
+      res.status(409).json({ error: 'Night transition already in progress' });
+      return;
+    }
+    nightInProgress = true;
+
+    // Use SSE to stream night conversations as they complete
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    // Keepalive ping every 10s to prevent proxy/browser timeout
+    const keepAlive = setInterval(() => {
+      if (!res.writableEnded) res.write(': keepalive\n\n');
+    }, 10_000);
+
+    let clientDisconnected = false;
+    _req.on('close', () => { clientDisconnected = true; clearInterval(keepAlive); });
+
     gameState.advanceToNight();
 
+    try {
     // Step 1: Director plans the night
+    res.write(`data: ${JSON.stringify({ type: 'status', message: 'Director is planning the night...' })}\n\n`);
     await planNight();
 
-    // Step 2: Execute NPC-to-NPC conversations based on Director's plan
+    // If Director failed, generate fallback conversation pairs from active characters
+    if (!gameState.getDirectorPlan()) {
+      console.log("⚠️ No Director plan — generating fallback night conversation pairs");
+      const chars = getActiveCharacters();
+      const shuffled = [...chars].sort(() => Math.random() - 0.5);
+      const fallbackPairs = [];
+      const pairLimit = Math.min(Math.floor(shuffled.length / 2), 3);
+      for (let i = 0; i < pairLimit; i++) {
+        const a = shuffled[i * 2];
+        const b = shuffled[i * 2 + 1];
+        if (!a || !b) break;
+        fallbackPairs.push({
+          ids: [a.id, b.id] as [string, string],
+          location: "a dimly lit corridor",
+          scenario: "You've run into each other late at night. The investigation is weighing on both of you. Talk about what happened today, your suspicions, your fears.",
+        });
+      }
+      if (fallbackPairs.length > 0) {
+        gameState.setDirectorPlan({
+          conversations: fallbackPairs,
+          npcPositions: chars.map((c: any) => ({
+            id: c.id,
+            name: c.name,
+            location: "hallway",
+            x: 10 + Math.floor(Math.random() * 20),
+            y: 10 + Math.floor(Math.random() * 15),
+          })),
+          newEvidence: [],
+          movedEvidence: [],
+          removedEvidence: [],
+          overnightNarrative: "The night passed uneasily. Whispered conversations echoed through the halls as the suspects wrestled with their secrets.",
+          npcNightContext: {},
+        });
+      }
+    }
+
+    // Step 2: Execute NPC-to-NPC conversations, streaming each as it completes
     console.log("🌙 Executing night conversations...");
+    res.write(`data: ${JSON.stringify({ type: 'status', message: 'Suspects are talking...' })}\n\n`);
     let conversations: NightConversation[] = [];
     try {
-      conversations = await conductNightConversations();
+      conversations = await conductNightConversations((convo) => {
+        // Stream each completed conversation to the client immediately
+        if (!clientDisconnected) {
+          res.write(`data: ${JSON.stringify({ type: 'conversation', conversation: convo })}\n\n`);
+        }
+      });
       console.log(`✅ ${conversations.length} night conversations completed`);
     } catch (err: any) {
       console.error("❌ Night conversations failed:", err.message);
     }
 
-    res.json({
-      timeOfDay: 'night',
-      message: 'Night has fallen over Blackwood Manor...',
-      conversations,
-    });
+    clearInterval(keepAlive);
+
+    // Send final event with all conversations (for clients that need the full set)
+    console.log(`📤 Sending ${conversations.length} night conversations to client (${conversations.reduce((n, c) => n + c.exchanges.length, 0)} total exchanges)`);
+    res.write(`data: ${JSON.stringify({ type: 'done', timeOfDay: 'night', message: 'Night has fallen over Blackwood Manor...', conversations })}\n\n`);
+    res.end();
+    } finally {
+      nightInProgress = false;
+    }
   } else {
     const result = gameState.advanceToNextDay();
 
@@ -1144,70 +1675,435 @@ app.post("/api/day/advance", async (_req, res) => {
 });
 
 // ── Mystery generation ────────────────────────────────────────────
+let _generationInProgress = false;
+// Store generation events so clients can reconnect after proxy disconnects
+let _generationEvents: Record<string, any>[] = [];
+let _generationComplete = false;
+
+// Poll endpoint — client reconnects here after disconnect to get missed events
+app.get("/api/mystery/generate/status", (_req, res) => {
+  const afterIdx = parseInt(_req.query.after as string) || 0;
+  const events = _generationEvents.slice(afterIdx);
+  res.json({
+    inProgress: _generationInProgress,
+    complete: _generationComplete,
+    events,
+    nextIndex: _generationEvents.length,
+  });
+});
+
 app.post("/api/mystery/generate", async (_req, res) => {
+  // Prevent concurrent generations — they'd fight over the same session IDs
+  if (_generationInProgress) {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.flushHeaders();
+    res.write(`data: ${JSON.stringify({ phase: 'error', status: '❌ A mystery is already being generated. Please wait.', error: true })}\n\n`);
+    res.write("data: [DONE]\n\n");
+    res.end();
+    return;
+  }
+  _generationInProgress = true;
+  _generationEvents = [];
+  _generationComplete = false;
+
   console.log("🎲 Generating procedural mystery...");
 
   res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.setHeader("X-Content-Type-Options", "nosniff");
   res.flushHeaders();
 
-  const sendStatus = (msg: string) => {
-    res.write(`data: ${JSON.stringify({ status: msg })}\n\n`);
+  const sendEvent = (event: Record<string, any>) => {
+    // Store for polling reconnect
+    if (event.phase !== 'heartbeat') _generationEvents.push(event);
+    try { res.write(`data: ${JSON.stringify(event)}\n\n`); } catch {}
   };
+
+  // Helper: send a prompt to a streaming session, collect full response,
+  // and emit SSE heartbeats on every delta so the connection stays alive.
+  let _lastHeartbeat = 0;
+  async function streamCollect(session: CopilotSession, prompt: string, timeoutMs: number): Promise<string> {
+    let content = '';
+    let deltaCount = 0;
+    const unsub = session.on("assistant.message_delta", (event: any) => {
+      content += event.data?.deltaContent ?? '';
+      deltaCount++;
+      if (deltaCount === 1) console.log("  [stream] First delta received");
+      if (deltaCount % 50 === 0) console.log(`  [stream] ${deltaCount} deltas, ${content.length} chars so far`);
+      // Throttled heartbeat — at most one every 500ms across all parallel streams
+      const now = Date.now();
+      if (now - _lastHeartbeat > 500) {
+        _lastHeartbeat = now;
+        try { res.write(`data: ${JSON.stringify({ phase: 'heartbeat' })}\n\n`); } catch {}
+      }
+    });
+    try {
+      const result = await session.sendAndWait({ prompt }, timeoutMs);
+      unsub();
+      console.log(`  [stream] Done: ${deltaCount} deltas total`);
+      // Prefer the final assembled content, fall back to streamed deltas
+      return result?.data?.content ?? content;
+    } catch (err) {
+      unsub();
+      console.log(`  [stream] Error after ${deltaCount} deltas, ${content.length} chars collected`);
+      // If we got partial content from deltas, return that instead of throwing
+      if (content.length > 200) return content;
+      throw err;
+    }
+  }
 
   try {
     // Clean up any previous architect session
     try { await client.deleteSession("blackwood-architect"); } catch {}
 
+    console.log("  Creating architect session...");
     const architect = await client.createSession({
       sessionId: "blackwood-architect",
       model: modelSettings.architect,
-      streaming: false,
+      streaming: true,
       tools: [],
       onPermissionRequest: approveAll,
       infiniteSessions: { enabled: false },
       systemMessage: { mode: "replace", content: "You are a creative mystery designer. Always respond with valid JSON only, no markdown, no explanations." },
     });
+    console.log("  Architect session created, sending skeleton prompt...");
 
     // ── Step 1: Generate skeleton ──
-    sendStatus("🎭 Designing the crime scene and suspects...");
-    let skeletonPrompt = SKELETON_PROMPT;
-    if (previousSettings.length > 0) {
-      skeletonPrompt += `\n\nIMPORTANT: The following settings have ALREADY been used. You MUST choose something COMPLETELY DIFFERENT:\n- ${previousSettings.join('\n- ')}\n\nBe creative! Pick a totally new setting, theme, and cast of characters.`;
-    }
-    const skeletonResult = await architect.sendAndWait({ prompt: skeletonPrompt }, 90_000);
-    const skeletonJson = extractJSON(skeletonResult?.data?.content ?? "");
+    sendEvent({ phase: 'thinking', agent: 'architect', status: "🏛️ Mystery Architect is designing the world from scratch..." });
+    const skeletonPrompt = buildSkeletonPrompt(previousSettings);
+    const skeletonRaw = await streamCollect(architect, skeletonPrompt, 180_000);
+    console.log(`  Skeleton raw length: ${skeletonRaw.length} chars`);
+    let skeletonJson = extractJSON(skeletonRaw);
+    skeletonJson = repairTruncatedJSON(skeletonJson);
     const skeleton = JSON.parse(skeletonJson);
+
+    // Validate skeleton has required arrays — truncated/repaired JSON may be incomplete
+    if (!Array.isArray(skeleton.characters) || skeleton.characters.length === 0) {
+      throw new Error(`Skeleton missing characters array (got ${typeof skeleton.characters}). JSON may have been too truncated to repair.`);
+    }
+    if (!Array.isArray(skeleton.rooms) || skeleton.rooms.length === 0) {
+      throw new Error(`Skeleton missing rooms array (got ${typeof skeleton.rooms}). JSON may have been too truncated to repair.`);
+    }
+    if (!Array.isArray(skeleton.evidence) || skeleton.evidence.length === 0) {
+      throw new Error(`Skeleton missing evidence array (got ${skeleton.evidence?.length ?? 0} items). Regeneration needed.`);
+    }
+
+    // Enforce minimum 6 suspects — if AI generated fewer, ask for more
+    if (skeleton.characters.length < 6) {
+      console.warn(`⚠️ Skeleton only has ${skeleton.characters.length} suspects — requesting ${6 - skeleton.characters.length} more`);
+      sendEvent({ phase: 'thinking', agent: 'architect', status: `Adding more suspects (${skeleton.characters.length} → 6+)...` });
+      const moreCharsRaw = await streamCollect(architect, `Your mystery "${skeleton.title}" only has ${skeleton.characters.length} suspects. A great mystery needs at least 6 suspects to create enough intrigue, red herrings, and social dynamics.
+
+ADD ${6 - skeleton.characters.length} more suspects to make it ${6} total. Each new suspect needs: id, name, role, location (existing room_id), personality, motive, secret, alibi, isKiller: false, spriteColors.
+
+Here are the existing rooms: ${skeleton.rooms.map((r: any) => r.id).join(', ')}
+Here are the existing suspects: ${skeleton.characters.map((c: any) => `${c.name} (${c.id})`).join(', ')}
+
+Output a JSON array of ONLY the new characters (same format as before). No markdown.`, 120_000);
+      try {
+        const moreChars = JSON.parse(extractJSON(moreCharsRaw));
+        const newChars = Array.isArray(moreChars) ? moreChars : (moreChars.characters || []);
+        for (const c of newChars) {
+          if (c.id && c.name && !skeleton.characters.find((ex: any) => ex.id === c.id)) {
+            skeleton.characters.push(c);
+          }
+        }
+        console.log(`  Now have ${skeleton.characters.length} suspects after supplement`);
+      } catch (err: any) {
+        console.warn('  Failed to parse supplemental characters:', err.message);
+      }
+    }
+
+    // Cap at 12 suspects
+    if (skeleton.characters.length > 12) {
+      skeleton.characters = skeleton.characters.slice(0, 12);
+    }
+
     console.log(`  Skeleton: "${skeleton.title}" — ${skeleton.characters.length} suspects, ${skeleton.evidence.length} evidence`);
+
+    sendEvent({
+      phase: 'skeleton_done',
+      agent: 'architect',
+      status: `✅ Mystery designed: "${skeleton.title}"`,
+      title: skeleton.title,
+      setting: skeleton.setting,
+      crime: skeleton.crime,
+      characters: skeleton.characters.map((c: any) => ({ name: c.name, role: c.role })),
+      evidenceCount: skeleton.evidence.length,
+      rooms: skeleton.rooms.map((r: any) => r.name || r.id),
+      visual: skeleton.visual,
+    });
 
     // ── Step 2: Generate each character's system prompt ──
     const fullCharacters = [];
     for (let i = 0; i < skeleton.characters.length; i++) {
       const char = skeleton.characters[i];
-      sendStatus(`📝 Writing ${char.name}'s backstory (${i+1}/${skeleton.characters.length})...`);
+      sendEvent({ phase: 'thinking', agent: 'character_writer', status: `📝 Writing ${char.name}'s full backstory, secrets, and psychology (${i+1}/${skeleton.characters.length})...`, characterName: char.name, characterRole: char.role });
 
-      const charResult = await architect.sendAndWait({
-        prompt: buildCharacterPrompt(skeleton, char, skeleton.characters, skeleton.evidence)
-      }, 60_000);
-
-      const prompt = charResult?.data?.content ?? "";
+      const prompt = await streamCollect(architect,
+        buildCharacterPrompt(skeleton, char, skeleton.characters, skeleton.evidence),
+        180_000
+      );
       fullCharacters.push({
         ...char,
         systemPrompt: prompt,
       });
       console.log(`  Character ${i+1}: ${char.name} (${prompt.length} chars)`);
+      sendEvent({ phase: 'character_done', agent: 'character_writer', status: `✅ ${char.name} fully written`, characterName: char.name, characterRole: char.role, promptLength: prompt.length });
     }
 
     // ── Step 3: Generate Director prompt ──
-    sendStatus("🎬 Creating the Director's playbook...");
-    const dirResult = await architect.sendAndWait({
-      prompt: buildDirectorPromptRequest(skeleton)
-    }, 60_000);
-    const directorPrompt = dirResult?.data?.content ?? "";
+    sendEvent({ phase: 'thinking', agent: 'director', status: "🎬 Director AI is writing the night orchestration playbook..." });
+    const directorPrompt = await streamCollect(architect,
+      buildDirectorPromptRequest(skeleton),
+      180_000
+    );
+    sendEvent({ phase: 'director_done', agent: 'director', status: "✅ Director playbook ready" });
 
-    // ── Step 4: Compute room layout, positions, sentiments ──
-    sendStatus("🗺️ Building the world...");
+    // ── Step 4: Creative Agency — three parallel agents for environment + props + characters ──
+    sendEvent({ phase: 'thinking', agent: 'creative', status: "🎨 Creative Agency deploying 3 agents: Environment, Props Department, Character Art..." });
+    let creativeAssets: CreativeAssets;
+    let envSession: any, propsSession: any, charSession: any;
+
+    const creativeInput = {
+      title: skeleton.title,
+      setting: skeleton.setting,
+      settingTheme: skeleton.settingTheme || 'noir',
+      rooms: skeleton.rooms.map((r: any) => ({ id: r.id, name: r.name || r.id })),
+      characters: skeleton.characters.map((c: any) => ({ id: c.id, name: c.name, role: c.role })),
+      evidence: skeleton.evidence.map((e: any) => ({ id: e.id, name: e.name, description: e.description || '' })),
+      crime: skeleton.crime || '',
+      weather: skeleton.visual?.weather,
+      visual: skeleton.visual,
+    };
+
+    try {
+      // Create three fresh sessions
+      try { await client.deleteSession("blackwood-creative-env"); } catch {}
+      try { await client.deleteSession("blackwood-creative-props"); } catch {}
+      try { await client.deleteSession("blackwood-creative-chars"); } catch {}
+
+      const sessionOpts = {
+        model: modelSettings.architect,
+        streaming: true,
+        tools: [] as any[],
+        onPermissionRequest: approveAll,
+        infiniteSessions: { enabled: false },
+        systemMessage: { mode: "replace" as const, content: "You are a visual artist for a 2D pixel-art game. Output valid minified JSON only — no markdown, no explanations, no extra text." },
+      };
+
+      [envSession, propsSession, charSession] = await Promise.all([
+        client.createSession({ ...sessionOpts, sessionId: "blackwood-creative-env" }),
+        client.createSession({ ...sessionOpts, sessionId: "blackwood-creative-props" }),
+        client.createSession({ ...sessionOpts, sessionId: "blackwood-creative-chars" }),
+      ]);
+
+      const envPrompt = buildEnvironmentPrompt(creativeInput);
+      const propsPrompt = buildPropsPrompt(creativeInput);
+      const charPrompt = buildCharacterAssetsPrompt(creativeInput);
+
+      // Signal sub-agents starting
+      sendEvent({ phase: 'creative_sub', sub: 'env', state: 'active' });
+      sendEvent({ phase: 'creative_sub', sub: 'props', state: 'active' });
+      sendEvent({ phase: 'creative_sub', sub: 'chars', state: 'active' });
+
+      // Run all three in parallel — use allSettled so one failure doesn't discard the others
+      const results = await Promise.allSettled([
+        streamCollect(envSession, envPrompt, 180_000),
+        streamCollect(propsSession, propsPrompt, 180_000),
+        streamCollect(charSession, charPrompt, 180_000),
+      ]);
+
+      const envRaw = results[0].status === 'fulfilled' ? results[0].value : '';
+      const propsRaw = results[1].status === 'fulfilled' ? results[1].value : '';
+      const charRaw = results[2].status === 'fulfilled' ? results[2].value : '';
+
+      // Signal sub-agent completion
+      sendEvent({ phase: 'creative_sub', sub: 'env', state: results[0].status === 'fulfilled' ? 'done' : 'failed' });
+      sendEvent({ phase: 'creative_sub', sub: 'props', state: results[1].status === 'fulfilled' ? 'done' : 'failed' });
+      sendEvent({ phase: 'creative_sub', sub: 'chars', state: results[2].status === 'fulfilled' ? 'done' : 'failed' });
+
+      if (results[0].status === 'rejected') console.warn(`  Creative env agent failed:`, results[0].reason?.message);
+      if (results[1].status === 'rejected') console.warn(`  Creative props agent failed:`, results[1].reason?.message);
+      if (results[2].status === 'rejected') console.warn(`  Creative chars agent failed:`, results[2].reason?.message);
+
+      console.log(`  Creative output — env: ${envRaw.length} chars, props: ${propsRaw.length} chars, chars: ${charRaw.length} chars`);
+
+      // Parse and merge whichever succeeded
+      creativeAssets = {} as CreativeAssets;
+      for (const [label, raw] of [['env', envRaw], ['props', propsRaw], ['chars', charRaw]] as const) {
+        if (!raw) continue;
+        try {
+          const json = repairTruncatedJSON(extractJSON(raw));
+          const assets = JSON.parse(json);
+          Object.assign(creativeAssets, assets);
+        } catch (e: any) {
+          console.warn(`  Creative ${label} parse failed:`, e.message);
+        }
+      }
+
+      // ── Follow-up call for any missing sections ──
+      const missingEnv: string[] = [];
+      if (!creativeAssets.particles) missingEnv.push('particles');
+      if (!creativeAssets.weather?.particle?.draw?.length) missingEnv.push('weather');
+      if (!creativeAssets.roomAmbiance || Object.keys(creativeAssets.roomAmbiance).length === 0) missingEnv.push('roomAmbiance');
+      if (!creativeAssets.wallTile?.draw?.length) missingEnv.push('wallTile');
+
+      const missingProps: string[] = [];
+      if (!Array.isArray(creativeAssets.decorations) || creativeAssets.decorations.length === 0) missingProps.push('decorations');
+      if (!Array.isArray(creativeAssets.ambientProps) || creativeAssets.ambientProps.length === 0) missingProps.push('ambientProps');
+      if (!Array.isArray(creativeAssets.furniture) || creativeAssets.furniture.length === 0) missingProps.push('furniture');
+
+      const missingChar: string[] = [];
+      if (!Array.isArray(creativeAssets.evidenceSprites) || creativeAssets.evidenceSprites.length === 0) missingChar.push('evidenceSprites');
+      if (!Array.isArray(creativeAssets.npcCostumes) || creativeAssets.npcCostumes.length === 0) missingChar.push('npcCostumes');
+      if (!Array.isArray(creativeAssets.portraits) || creativeAssets.portraits.length === 0) missingChar.push('portraits');
+      if (!creativeAssets.crimeScene?.markers?.length) missingChar.push('crimeScene');
+
+      const totalMissing = missingEnv.length + missingProps.length + missingChar.length;
+      if (totalMissing > 0) {
+        console.log(`  Creative: missing sections — env: [${missingEnv.join(', ')}], props: [${missingProps.join(', ')}], chars: [${missingChar.join(', ')}]. Follow-up...`);
+        sendEvent({ phase: 'thinking', agent: 'creative', status: `🎨 Finishing ${totalMissing} remaining visual sections...` });
+
+        // Signal which sub-agents need repair
+        if (missingEnv.length > 0) sendEvent({ phase: 'creative_sub', sub: 'env', state: 'active' });
+        if (missingProps.length > 0) sendEvent({ phase: 'creative_sub', sub: 'props', state: 'active' });
+        if (missingChar.length > 0) sendEvent({ phase: 'creative_sub', sub: 'chars', state: 'active' });
+
+        try {
+          const repairPrompts: Promise<string>[] = [];
+          const repairOrder: ('env' | 'props' | 'char')[] = [];
+          const roomList = skeleton.rooms.map((r: any) => `- ${r.id}: "${r.name || r.id}"`).join('\n');
+          const primHelp = 'You have 8 drawing primitives: fill, circle, line, tri, stroke, ellipse, arc, roundRect. All use {"op":"...","color":"#hex",...} with optional "alpha".';
+
+          if (missingEnv.length > 0) {
+            const schemas: Record<string, string> = {
+              wallTile: '"wallTile":{"draw":[...]}',
+              particles: '"particles":{"color":"#hex","size":2,"speed":{"min":3,"max":10},"alpha":{"start":0,"end":0.2},"frequency":400,"lifespan":6000,"blendMode":"ADD"}',
+              weather: '"weather":{"particle":{"width":4,"height":8,"draw":[...]},"config":{"speedX":{"min":-60,"max":-30},"speedY":{"min":280,"max":360},"alpha":{"start":0.5,"end":0.15},"frequency":18,"lifespan":1200,"blendMode":"ADD"}}',
+              roomAmbiance: '"roomAmbiance":{"room_id":{"tintColor":"#hex","tintAlpha":0.06}}',
+            };
+            const p = `You are a VISUAL ARTIST. Setting: "${skeleton.setting}" | Weather: ${skeleton.visual?.weather || 'clear'}\nROOMS:\n${roomList}\n${primHelp}\nGenerate ONLY these as minified JSON:\n{${missingEnv.map(s => schemas[s]).filter(Boolean).join(',')}}\nwallTile 32×32, 4-8 draw ops. roomAmbiance per room tintAlpha 0.03-0.12. Weather particle ≤16×16. Output ONLY JSON.`;
+            repairPrompts.push(streamCollect(envSession, p, 120_000));
+            repairOrder.push('env');
+          }
+
+          if (missingProps.length > 0) {
+            const schemas: Record<string, string> = {
+              decorations: '"decorations":[{"roomId":"id","items":[{"name":"N","width":32,"height":32,"draw":[...]}]}]',
+              furniture: '"furniture":[{"name":"N","width":48,"height":32,"draw":[...]}]',
+              ambientProps: '"ambientProps":[{"name":"N","width":12,"height":12,"count":4,"draw":[...]}]',
+            };
+            const p = `You are the PROPS DEPARTMENT. Setting: "${skeleton.setting}"\nROOMS:\n${roomList}\n${primHelp}\nGenerate ONLY these as minified JSON:\n{${missingProps.map(s => schemas[s]).filter(Boolean).join(',')}}\nDecorations 2-3 per room 24-48px 5-10 ops. Furniture 5-8 items 32-64px 6-12 ops. AmbientProps 3-5 types 8-16px. roomId MUST match. Output ONLY JSON.`;
+            repairPrompts.push(streamCollect(propsSession, p, 120_000));
+            repairOrder.push('props');
+          }
+
+          if (missingChar.length > 0) {
+            const charList = skeleton.characters.map((c: any) => `- ${c.id}: "${c.name}" (${c.role})`).join('\n');
+            const evList = skeleton.evidence.map((e: any) => `- ${e.id}: "${e.name}" — ${e.description || ''}`).join('\n');
+            const schemas: Record<string, string> = {
+              evidenceSprites: '"evidenceSprites":[{"evidenceId":"id","width":16,"height":16,"draw":[...]}]',
+              npcCostumes: '"npcCostumes":[{"characterId":"id","draw":[...]}]',
+              portraits: '"portraits":[{"characterId":"id","draw":[...]}]',
+              crimeScene: '"crimeScene":{"bodyOutline":{"draw":[...]},"markers":[{"name":"N","draw":[...]}],"barrier":{"draw":[...]}}',
+            };
+            const p = `You are a VISUAL ARTIST. Setting: "${skeleton.setting}" | Crime: ${skeleton.crime || ''}\nCHARACTERS:\n${charList}\nEVIDENCE:\n${evList}\n${primHelp}\nGenerate ONLY these as minified JSON:\n{${missingChar.map(s => schemas[s]).filter(Boolean).join(',')}}\nevidenceSprites 16×16 each 3-6 ops per item, evidenceId MUST match. npcCostumes overlay 32×32 body 2-5 ops. Portraits 64×64 6-15 ops. CrimeScene body 48×64. characterId MUST match. Output ONLY JSON.`;
+            repairPrompts.push(streamCollect(charSession, p, 120_000));
+            repairOrder.push('char');
+          }
+
+          const repairResults = await Promise.allSettled(repairPrompts);
+          for (let i = 0; i < repairResults.length; i++) {
+            const label = repairOrder[i];
+            const subId = label === 'env' ? 'env' : label === 'props' ? 'props' : 'chars';
+            const missingKeys = label === 'env' ? missingEnv : label === 'props' ? missingProps : missingChar;
+            if (repairResults[i].status === 'rejected') {
+              console.warn(`  Creative repair (${label}) failed:`, (repairResults[i] as PromiseRejectedResult).reason?.message);
+              sendEvent({ phase: 'creative_sub', sub: subId, state: 'failed' });
+              continue;
+            }
+            try {
+              const repairJson = repairTruncatedJSON(extractJSON((repairResults[i] as PromiseFulfilledResult<string>).value));
+              const repairAssets = JSON.parse(repairJson);
+              for (const key of missingKeys) {
+                if ((repairAssets as any)[key]) {
+                  (creativeAssets as any)[key] = (repairAssets as any)[key];
+                }
+              }
+              console.log(`  Creative repair (${label}): recovered ${Object.keys(repairAssets).join(', ')}`);
+              sendEvent({ phase: 'creative_sub', sub: subId, state: 'done' });
+            } catch (e: any) {
+              console.warn(`  Creative repair (${label}) parse failed:`, e.message);
+              sendEvent({ phase: 'creative_sub', sub: subId, state: 'failed' });
+            }
+          }
+        } catch (repairErr: any) {
+          console.warn(`  Creative follow-up failed:`, repairErr.message);
+        }
+      }
+
+      // Validate and normalize roomIds to match actual skeleton room IDs.
+      const roomIdList: string[] = skeleton.rooms.map((r: any) => r.id);
+      const validRoomIdSet = new Set<string>(roomIdList);
+      if (Array.isArray(creativeAssets.decorations)) {
+        creativeAssets.decorations = creativeAssets.decorations.map((d: any, idx: number) => {
+          if (validRoomIdSet.has(d.roomId)) return d;
+          const nameMatch = skeleton.rooms.find((r: any) =>
+            r.name?.toLowerCase() === d.roomId?.toLowerCase() ||
+            r.id?.toLowerCase() === d.roomId?.toLowerCase() ||
+            r.name?.toLowerCase().replace(/\s+/g, '_') === d.roomId?.toLowerCase() ||
+            d.roomId?.toLowerCase().replace(/[\s_-]+/g, '') === r.name?.toLowerCase().replace(/[\s_-]+/g, '')
+          );
+          const fallbackId = nameMatch?.id || roomIdList[idx % roomIdList.length];
+          console.warn(`  Creative: remapping decoration roomId "${d.roomId}" → "${fallbackId}"`);
+          return { ...d, roomId: fallbackId };
+        }).filter(Boolean);
+      }
+      const designedItems = (creativeAssets.decorations ?? []).flatMap((d: any) =>
+        (d.items ?? []).map((item: any) => item.name).filter(Boolean)
+      );
+      const ambientPropNames = (creativeAssets.ambientProps ?? []).map((p: any) => p.name).filter(Boolean);
+      const furnitureNames = (creativeAssets.furniture ?? []).map((f: any) => f.name).filter(Boolean);
+      console.log(`  Creative agent: ${creativeAssets.decorations?.length ?? 0} decoration groups, ${creativeAssets.ambientProps?.length ?? 0} props, ${creativeAssets.furniture?.length ?? 0} furniture, ${creativeAssets.evidenceSprites?.length ?? 0} evidence, ${creativeAssets.npcCostumes?.length ?? 0} costumes, ${creativeAssets.portraits?.length ?? 0} portraits`);
+      sendEvent({
+        phase: 'creative_done', agent: 'creative',
+        status: "✅ Visual atmosphere designed",
+        palette: skeleton.visual,
+        decorationCount: creativeAssets.decorations?.length ?? 0,
+        designedItems: designedItems.slice(0, 12),
+        ambientPropNames,
+        furnitureNames,
+        hasCustomWallTile: !!(creativeAssets.wallTile?.draw?.length),
+        evidenceSpriteCount: creativeAssets.evidenceSprites?.length ?? 0,
+        npcCostumeCount: creativeAssets.npcCostumes?.length ?? 0,
+        portraitCount: creativeAssets.portraits?.length ?? 0,
+        hasCustomWeather: !!(creativeAssets.weather?.particle?.draw?.length),
+        hasCrimeScene: !!(creativeAssets.crimeScene?.markers?.length),
+      });
+    } catch (err: any) {
+      console.warn("  Creative agent failed, using defaults:", err.message);
+      creativeAssets = getDefaultCreativeAssets(
+        skeleton.rooms.map((r: any) => ({ id: r.id, name: r.name || r.id })),
+        skeleton.characters.map((c: any) => ({ id: c.id, name: c.name })),
+        skeleton.evidence.map((e: any) => ({ id: e.id, name: e.name }))
+      );
+      sendEvent({ phase: 'creative_done', agent: 'creative', status: "🎨 Visual atmosphere using defaults" });
+    } finally {
+      for (const s of [envSession, propsSession, charSession]) {
+        if (!s) continue;
+        try { await s.disconnect(); } catch {}
+      }
+      try { await client.deleteSession("blackwood-creative-env"); } catch {}
+      try { await client.deleteSession("blackwood-creative-props"); } catch {}
+      try { await client.deleteSession("blackwood-creative-chars"); } catch {}
+    }
+
+    // ── Step 5: Compute room layout, positions, sentiments ──
+    sendEvent({ phase: 'thinking', agent: 'world_builder', status: "🗺️ Assembling the world map and placing all elements..." });
 
     const layoutType = skeleton.visual?.roomLayout || 'grid';
     const roomCount = skeleton.rooms.length;
@@ -1287,16 +2183,91 @@ app.post("/api/mystery/generate", async (_req, res) => {
       return placed;
     }
 
-    const rooms = generateLayout(skeleton.rooms.slice(0, 8), layoutType);
+    let rooms = generateLayout(skeleton.rooms.slice(0, 8), layoutType);
+
+    // ── Multi-floor support ──────────────────────────────────
+    // Decide if multi-floor makes sense: ≥6 rooms and non-linear layout
+    const eligibleForMultiFloor = rooms.length >= 6 && layoutType !== 'corridor';
+    let stairs: any[] = [];
+    let multiFloor = false;
+
+    if (eligibleForMultiFloor) {
+      // All original rooms become floor 0
+      rooms = rooms.map((r: any) => ({ ...r, floorNum: 0 }));
+
+      // Create upper floor rooms mirroring ground floor positions.
+      // Use AI-generated upper room names/textures if provided, else fall back to generic defaults.
+      const upperRoomDefs: { name: string; floor: string }[] = Array.isArray(skeleton.upperRooms)
+        ? skeleton.upperRooms
+        : [];
+      const fallbackNames = [
+        'Upper Gallery', 'Master Suite', 'Guest Chamber', 'Study Loft',
+        'Sitting Room', 'Balcony', 'Dressing Room', 'Upper Hall',
+      ];
+      const fallbackTextures = [
+        'tile_carpet', 'tile_carpet_blue', 'tile_carpet_red', 'tile_floor',
+        'tile_carpet', 'tile_floor', 'tile_carpet', 'tile_carpet',
+      ];
+      const upperRooms = rooms.map((r: any, i: number) => ({
+        ...r,
+        id: 'upper_' + r.id,
+        name: upperRoomDefs[i]?.name || fallbackNames[i % fallbackNames.length],
+        floor: upperRoomDefs[i]?.floor || fallbackTextures[i % fallbackTextures.length],
+        floorNum: 1,
+      }));
+
+      // Move last 2 characters to upper floor rooms
+      const charsToMove = fullCharacters.slice(-2);
+      for (const char of charsToMove) {
+        const groundRoom = rooms.find((r: any) => r.id === char.location);
+        if (groundRoom) {
+          char.location = 'upper_' + groundRoom.id;
+        }
+      }
+
+      // Place stairs inside the first room — guaranteed to exist on both floors
+      const stairRoom = rooms[0];
+      const stairX = stairRoom.x + stairRoom.w - 3;
+      const stairY = stairRoom.y + Math.floor(stairRoom.h / 2) - 1;
+      stairs = [
+        { x: stairX, y: stairY, w: 2, h: 2, fromFloor: 0, toFloor: 1 },
+        { x: stairX, y: stairY, w: 2, h: 2, fromFloor: 1, toFloor: 0 },
+      ];
+
+      rooms = [...rooms, ...upperRooms];
+      multiFloor = true;
+    }
 
     // Assign evidence positions within their rooms
-    const evidencePositions: Record<string, { x: number; y: number }> = {};
+    const evidencePositions: Record<string, { x: number; y: number; floor?: number }> = {};
     for (const ev of skeleton.evidence) {
       const room = rooms.find((r: any) => r.id === ev.location) || rooms[0];
       evidencePositions[ev.id] = {
         x: room.x + 2 + Math.floor(Math.random() * (room.w - 4)),
         y: room.y + 2 + Math.floor(Math.random() * (room.h - 4)),
+        ...(room.floorNum ? { floor: room.floorNum } : {}),
       };
+    }
+
+    // Move 1-2 evidence items to upper floor when multi-floor is active
+    if (multiFloor) {
+      const keyEv: string[] = Array.isArray(skeleton.keyEvidence) ? skeleton.keyEvidence : [];
+      const movableEvidence = skeleton.evidence.filter((ev: any) => !keyEv.includes(ev.id));
+      const evToMove = movableEvidence.slice(-2);
+      for (const ev of evToMove) {
+        const currentRoom = rooms.find((r: any) => r.id === ev.location && (r.floorNum ?? 0) === 0);
+        if (currentRoom) {
+          const upperRoom = rooms.find((r: any) => r.id === 'upper_' + currentRoom.id);
+          if (upperRoom) {
+            ev.location = upperRoom.id;
+            evidencePositions[ev.id] = {
+              x: upperRoom.x + 2 + Math.floor(Math.random() * (upperRoom.w - 4)),
+              y: upperRoom.y + 2 + Math.floor(Math.random() * (upperRoom.h - 4)),
+              floor: 1,
+            };
+          }
+        }
+      }
     }
 
     // Build initial sentiments
@@ -1328,6 +2299,9 @@ app.post("/api/mystery/generate", async (_req, res) => {
       evidence: skeleton.evidence,
       evidencePositions,
       rooms,
+      stairs: stairs.length > 0 ? stairs : undefined,
+      multiFloor: multiFloor || undefined,
+      creativeAssets,
       correctSuspect: skeleton.correctSuspect,
       keyEvidence: skeleton.keyEvidence,
       motiveKeywords: skeleton.motiveKeywords,
@@ -1340,27 +2314,37 @@ app.post("/api/mystery/generate", async (_req, res) => {
     previousSettings.push(`${skeleton.title} (${skeleton.setting})`);
     savePreviousSettings();
 
-    // Clean up architect
-    await architect.disconnect();
+    // Clean up architect — don't let disconnect failures block generation
+    try { await architect.disconnect(); } catch {}
     try { await client.deleteSession("blackwood-architect"); } catch {}
 
-    sendStatus(`✅ "${skeleton.title}" is ready! ${fullCharacters.length} suspects, ${skeleton.evidence.length} evidence items.`);
-    res.write(`data: ${JSON.stringify({
-      status: "complete",
+    sendEvent({
+      phase: 'complete',
+      status: `✅ "${skeleton.title}" is ready!`,
       title: skeleton.title,
       setting: skeleton.setting,
       suspects: fullCharacters.length,
+      evidenceCount: skeleton.evidence.length,
       theme: skeleton.settingTheme,
-    })}\n\n`);
+      roomCount: rooms.length,
+      multiFloor: multiFloor || false,
+      decorationCount: creativeAssets?.decorations?.length ?? 0,
+      ambientPropCount: creativeAssets?.ambientProps?.length ?? 0,
+      wallTileCount: creativeAssets?.wallTile ? 1 : 0,
+      palette: skeleton.visual,
+    });
     res.write("data: [DONE]\n\n");
     res.end();
 
     console.log(`✅ Generated: "${skeleton.title}" with ${fullCharacters.length} suspects`);
   } catch (err: any) {
     console.error("Mystery generation failed:", err.message);
-    sendStatus(`❌ Generation failed: ${err.message}`);
+    sendEvent({ phase: 'error', status: `❌ Generation failed: ${err.message}`, error: true });
     res.write("data: [DONE]\n\n");
     res.end();
+  } finally {
+    _generationComplete = true;
+    _generationInProgress = false;
   }
 });
 
@@ -1395,6 +2379,9 @@ app.get("/api/mystery/rooms", (_req, res) => {
       color: (e as any).color || null,
     })),
     evidencePositions: generatedMystery.evidencePositions,
+    stairs: generatedMystery.stairs || [],
+    multiFloor: generatedMystery.multiFloor || false,
+    creativeAssets: generatedMystery.creativeAssets || null,
   });
 });
 
@@ -1444,6 +2431,11 @@ app.post("/api/level/select", async (req, res) => {
     try { await client.deleteSession("blackwood-profiler"); } catch {}
     profilerSession = null;
   }
+  if (psychologistSession) {
+    try { await psychologistSession.disconnect(); } catch {}
+    try { await client.deleteSession("blackwood-psychologist"); } catch {}
+    psychologistSession = null;
+  }
   console.log("🧹 All sessions cleared and deleted for fresh start");
 
   activeLevel = levelId;
@@ -1476,6 +2468,7 @@ app.post("/api/level/select", async (req, res) => {
       ALL_ROOM_POSITIONS[room.id] = {
         x: [room.x + 1, room.x + room.w - 2],
         y: [room.y + 1, room.y + room.h - 2],
+        ...(room.floorNum ? { floor: room.floorNum } : {}),
       };
       // Also register by name (Director may use either)
       ALL_ROOM_POSITIONS[room.name.toLowerCase().replace(/\s+/g, '_')] = ALL_ROOM_POSITIONS[room.id];
@@ -1490,6 +2483,16 @@ app.post("/api/level/select", async (req, res) => {
       initialSentiments: generatedMystery.initialSentiments,
       winMessage: generatedMystery.winMessage,
     });
+
+    // Set initial NPC floor assignments for multi-floor generated mysteries
+    if (generatedMystery.multiFloor) {
+      for (const char of generatedMystery.characters) {
+        const charRoom = generatedMystery.rooms.find(r => r.id === char.location);
+        if (charRoom && charRoom.floorNum) {
+          gameState.setNPCFloor(char.id, charRoom.floorNum);
+        }
+      }
+    }
   }
 
   res.json({ level: levelId, message: `Level set to: ${levelId}` });
@@ -1925,7 +2928,7 @@ app.post("/api/red-herring/activate", async (req, res) => {
       tools: gameTools,
       onPermissionRequest: approveAll,
       infiniteSessions: { enabled: false },
-      systemMessage: { mode: "replace", content: withLanguage(npc.systemPrompt) },
+      systemMessage: { mode: "replace", content: withPsychMode(withLanguage(npc.systemPrompt), 'npc') },
       hooks: createNPCHooks(),
     });
     sessions.set(npc.id, redHerringSession);
@@ -1972,7 +2975,7 @@ app.get("/api/red-herring/check", async (_req, res) => {
           tools: gameTools,
           onPermissionRequest: approveAll,
           infiniteSessions: { enabled: false },
-          systemMessage: { mode: "replace", content: withLanguage(npc.systemPrompt) },
+          systemMessage: { mode: "replace", content: withPsychMode(withLanguage(npc.systemPrompt), 'npc') },
           hooks: createNPCHooks(),
         });
         sessions.set(npc.id, redHerringSession);
@@ -1985,6 +2988,116 @@ app.get("/api/red-herring/check", async (_req, res) => {
     }
   }
   res.json({ shouldActivate, active: redHerringActive, npc: redHerringNPC ? { id: redHerringNPC.id, name: redHerringNPC.name, x: redHerringNPC.x, y: redHerringNPC.y, room: redHerringNPC.room, color: redHerringNPC.color } : null });
+});
+
+// ── Director of Photography — Visual QA ─────────────────────────
+
+app.post("/api/dp/review", async (_req, res) => {
+  if (!generatedMystery) {
+    res.status(400).json({ error: 'No generated mystery to review' });
+    return;
+  }
+
+  console.log("🎬 Director of Photography: capturing texture grid...");
+  try {
+    // Step 1: Capture screenshot + extract texture metrics from browser
+    const { screenshot, sections, metrics } = await captureTextureGrid(PORT);
+    const screenshotBase64 = screenshot.toString('base64');
+    console.log(`📸 Captured ${sections.length} sections, ${metrics.length} texture metrics`);
+
+    // Step 2: Send metrics to DP agent for evaluation
+    let dpSession: CopilotSession | null = null;
+    try {
+      try { await client.deleteSession("blackwood-dp"); } catch {}
+      dpSession = await client.createSession({
+        sessionId: "blackwood-dp",
+        model: modelSettings.architect,
+        streaming: false,
+        tools: [],
+        onPermissionRequest: approveAll,
+        infiniteSessions: { enabled: false },
+        systemMessage: { mode: "replace", content: DP_SYSTEM_PROMPT },
+      });
+
+      // Format metrics for the model
+      const metricsReport = metrics.map((m: any) =>
+        `[${m.category}] "${m.name}" ${m.width}×${m.height}: ${m.filledPixelPercent}% filled, ${m.uniqueColors} colors, drawOps=${m.drawOpCount}${m.issues.length ? ' ⚠️ ' + m.issues.join(', ') : ''}`
+      ).join('\n');
+
+      console.log("🎬 DP reviewing texture metrics...");
+      const result = await dpSession.sendAndWait({
+        prompt: `Review the procedurally generated textures for "${generatedMystery.title}" (setting: ${generatedMystery.setting}).
+
+TEXTURE METRICS (extracted from rendered browser canvas):
+${metricsReport}
+
+Section summary: ${sections.map((s: any) => `${s.label}: ${s.count}`).join(', ')}
+
+Based on these metrics, evaluate the visual quality. Textures with <10% pixel fill are likely invisible/broken. Textures with <3 unique colors are likely monochrome. Evidence items (16×16) should have bright colors. Furniture items should be 40-54px.
+
+Respond with your JSON review.`,
+      }, 60_000);
+
+      const reviewText = result?.data?.content ?? '';
+      let review: DPReview;
+      try {
+        const jsonMatch = reviewText.match(/\{[\s\S]*\}/);
+        review = JSON.parse(jsonMatch ? jsonMatch[0] : reviewText);
+        review.passesQuality = (review.overallScore ?? 0) >= 5;
+        review.screenshotBase64 = screenshotBase64;
+      } catch {
+        console.warn("🎬 DP review parse failed, raw:", reviewText.slice(0, 200));
+        // Generate review from metrics directly
+        const criticalIssues: any[] = [];
+        for (const m of metrics) {
+          if (m.filledPixelPercent < 10) criticalIssues.push({ category: m.category, item: m.name, severity: 'critical', description: 'Texture is mostly empty/invisible', suggestion: 'Regenerate with coordinates within canvas bounds' });
+          else if (m.uniqueColors < 3 && m.category !== 'ambient') criticalIssues.push({ category: m.category, item: m.name, severity: 'major', description: 'Monochrome — lacks shading/detail', suggestion: 'Add distinct colors for iso faces (dark/medium/light)' });
+        }
+        review = {
+          overallScore: criticalIssues.length > 3 ? 3 : 6,
+          overallNotes: `Auto-generated from metrics: ${criticalIssues.length} issues detected`,
+          categories: sections.map((s: any) => ({ name: s.label, score: 5, count: s.count, notes: 'auto-scored' })),
+          issues: criticalIssues,
+          passesQuality: criticalIssues.length <= 3,
+          screenshotBase64,
+        };
+      }
+
+      console.log(`🎬 DP verdict: ${review.overallScore}/10 — ${review.issues.length} issues found`);
+      for (const issue of review.issues) {
+        console.log(`   [${issue.severity}] ${issue.category}${issue.item ? ` "${issue.item}"` : ''}: ${issue.description}`);
+      }
+
+      res.json(review);
+    } finally {
+      if (dpSession) {
+        try { await dpSession.disconnect(); } catch {}
+        try { await client.deleteSession("blackwood-dp"); } catch {}
+      }
+      await closeBrowser();
+    }
+  } catch (err: any) {
+    console.error("🎬 DP review failed:", err.message);
+    await closeBrowser();
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/dp/screenshot", async (_req, res) => {
+  if (!generatedMystery) {
+    res.status(400).json({ error: 'No generated mystery' });
+    return;
+  }
+  try {
+    const { screenshot, sections } = await captureTextureGrid(PORT);
+    await closeBrowser();
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Content-Disposition', 'inline; filename="dp-review.png"');
+    res.send(screenshot);
+  } catch (err: any) {
+    await closeBrowser();
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Reset
@@ -2016,6 +3129,11 @@ app.post("/api/reset", async (_req, res) => {
     try { await client.deleteSession("blackwood-profiler"); } catch {}
     profilerSession = null;
   }
+  if (psychologistSession) {
+    try { await psychologistSession.disconnect(); } catch {}
+    try { await client.deleteSession("blackwood-psychologist"); } catch {}
+    psychologistSession = null;
+  }
   // Clean up red herring session
   if (redHerringSession) {
     try { await redHerringSession.disconnect(); } catch {}
@@ -2028,6 +3146,7 @@ app.post("/api/reset", async (_req, res) => {
   redHerringActive = false;
   hiddenRoom = null;
   hiddenRoomRevealed = false;
+  nightInProgress = false;
   console.log("🧹 Full reset: all sessions cleared and deleted");
   gameState.reset();
   res.json({ reset: true });
@@ -2073,6 +3192,22 @@ app.post("/api/settings/language", (req, res) => {
   gameLanguage = language;
   console.log(`🌍 Language changed to ${language} — takes effect on next session creation`);
   res.json({ language, note: "Start a new game or reset for NPCs to speak this language" });
+});
+
+// Game mode
+app.get("/api/settings/mode", (_req, res) => {
+  res.json({ mode: gameMode });
+});
+
+app.post("/api/settings/mode", (req, res) => {
+  const { mode } = req.body;
+  if (mode !== 'normal' && mode !== 'psychological') {
+    res.status(400).json({ error: "mode must be 'normal' or 'psychological'" });
+    return;
+  }
+  gameMode = mode;
+  console.log(`🧠 Game mode changed to ${mode} — takes effect on next session creation`);
+  res.json({ mode, note: "Start a new game for full effect" });
 });
 
 // ── Version & Changelog (auto-generated from package.json + git) ─

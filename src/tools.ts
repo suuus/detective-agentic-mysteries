@@ -180,11 +180,12 @@ export function createGameTools(gameState: GameStateManager) {
         name: { type: "string", description: "Name of the evidence item (e.g., 'Hastily Written Warning Note')" },
         description: { type: "string", description: "Short one-line description" },
         detail: { type: "string", description: "What the detective sees when examining it (2-3 atmospheric sentences)" },
-        room: { type: "string", description: "Room where it should appear (study, library, kitchen, etc.)" }
+        room: { type: "string", description: "Room where it should appear (study, library, kitchen, etc. — or upper floor rooms: upper_bedroom, upper_study, upper_hall, guest_bedroom, balcony)" },
+        floor: { type: "number", description: "Floor number: 0 = ground (default), 1 = upper floor" }
       },
       required: ["name", "description", "detail", "room"]
     },
-    handler: async ({ name, description, detail, room }: { name: string; description: string; detail: string; room: string }, invocation: any) => {
+    handler: async ({ name, description, detail, room, floor }: { name: string; description: string; detail: string; room: string; floor?: number }, invocation: any) => {
       const sessionId = invocation?.sessionId ?? '';
       const characterId = sessionId.replace('blackwood-', '');
       const day = gameState.getCurrentDay();
@@ -244,17 +245,20 @@ export function createGameTools(gameState: GameStateManager) {
   });
 
   const getOverheardInfo = defineTool("get_overheard_info", {
-    description: "Check if you overheard anything from nearby interrogations. NPCs near the detective's conversations may have overheard useful or concerning information.",
+    description: "Check if you overheard anything from nearby interrogations. NPCs on the same floor as the detective's conversations may have overheard useful or concerning information. You can only overhear things happening on your current floor.",
     parameters: { type: "object", properties: {} },
     handler: async (_args: any, invocation: any) => {
       const sessionId = invocation?.sessionId ?? '';
       const characterId = sessionId.replace('blackwood-', '');
       const overheard = gameState.getEavesdroppedInfo(characterId);
       const alliances = gameState.getAlliances().filter(a => a.members.includes(characterId));
+      const myFloor = gameState.getNPCFloor(characterId);
       return {
         overheard: overheard.length > 0 ? overheard : ['Nothing overheard yet.'],
         alliances: alliances.map(a => ({ with: a.members.filter(m => m !== characterId), type: a.type, reason: a.reason })),
         recentPanicEvents: gameState.getRecentPanicEvents().map(e => e.description),
+        currentFloor: myFloor,
+        floorNote: `You are currently on floor ${myFloor === 0 ? 'ground' : myFloor === 1 ? 'upper' : 'basement'}. You can only overhear things on your floor.`,
       };
     }
   });

@@ -1112,17 +1112,40 @@ This replaces manual eavesdropping wiring and ensures side effects fire consiste
 |--------|---------|---------|----------|
 | HTML Structure | index.html | Panel layout, IDs | Semantic divs, z-index hierarchy |
 | Styling | style.css | Theme, animations, responsive | CSS vars, flex/grid, transitions |
-| HUD/Game Init | main.js | Phaser setup, button wiring | Global manager exposure, event handlers |
+| HUD/Game Init | main.js | Phaser setup, button wiring, End Day popup | Global manager exposure, event handlers |
 | Dialog | dialog.js | NPC conversations | Streaming, per-character history, sentiment |
 | Inventory | inventory.js | Evidence/notebook UI | Filtering, dynamic rendering |
 | API Client | api.js | HTTP/SSE communication | Async generators, error handling |
-| Sprites | BootScene.js | Procedural generation | Graphics → texture caching |
-| World | ManorScene.js | Map, physics, interactions | Tile grid, room system, day/night |
+| Sprites (Manor) | BootScene.js | Procedural generation | Graphics → texture caching |
+| Sprites (Cruise) | CruiseBootScene.js | Cruise ship sprites | Same pattern, ship-themed |
+| Sprites (Random) | RandomBootScene.js | AI-generated sprites | DrawOp DSL → Phaser textures |
+| World (Manor) | ManorScene.js | Map, physics, interactions | Tile grid, room system, day/night |
+| World (Cruise) | CruiseManorScene.js | Cruise ship world | Multi-floor, stair system |
+| World (Random) | RandomManorScene.js | AI-generated world | Dynamic rooms from generated data |
+| Crime Replay | reconstruction.js | Chapter-based post-win replay | Typewriter + Next navigation in modal |
+| NPC Emotions | npcEmotions.js | Floating emojis, tints, breathing | Polls sentiments, per-NPC visuals |
+| NPC Movement | npcMovement.js | Autonomous room pacing | State machine: idle/walk/pause |
+| NPC Approach | npcApproach.js | NPCs approach player | Proximity + sentiment triggers |
+| NPC TTS | npcTTS.js | Text-to-speech for NPCs | Web Speech API, gender-matched |
+| Narrator TTS | narratorTTS.js | Text-to-speech for narrator | Web Speech API |
+| Voice Input | voiceInput.js | Push-to-talk speech-to-text | Web Speech API |
+| Timed Events | timedEvents.js | Dramatic countdown challenges | Timer bar + pressure sequences |
+| Chase | chase.js | NPC flee sequences | Exit pathfinding + catch mechanics |
+| Ambient Music | ambientMusic.js | Procedural noir soundtrack | Web Audio API layers |
+| Weather | weather.js | Rain, fog, snow, storm | Phaser particle emitters |
+| Lighting | lighting.js | Flashlight / fog-of-war | GeometryMask, auto-enables Day 2+ |
 | Backend | server.ts | Sessions, endpoints, Director | Copilot SDK, retry logic, health checks |
 | Game State | gameState.ts | Evidence, accusations, days | Validation logic, day progression |
+| Mystery Gen | mystery-generator.ts | Skeleton Key prompts | On-demand procedural mysteries |
+| Creative Agency | creative-agent.ts | 3 parallel visual design agents | DrawOp DSL, Promise.allSettled |
+| Narrator | narrator.ts | Atmospheric prose agent | Noir narration + hint system |
+| Profiler | profiler.ts | Detective behavior analysis | Style/trait detection every 3rd question |
+| Psychologist | psychologist.ts | NPC emotional dynamics AI | Analyzes exchanges, briefs Director, evidence reactions |
 | Hidden Room | server.ts + ManorScene.js | Late-game map expansion | Dynamic room reveal, doorway clearing |
 | Red Herring NPC | server.ts + ManorScene.js | Misleading dynamic NPC | Random archetype pool, probabilistic spawn |
 | SDK Hooks | server.ts | Reactive cross-agent side effects | `onPostToolUse` for eavesdropping, emotional propagation |
+| Director Resilience | server.ts | Auto-retry + night fallback | `directorSendAndWait()`, fallback pairs |
+| Detective Adaptation | server.ts | Profile injection + night briefing | Profile in every prompt, Psychologist→Director briefing |
 
 ---
 
@@ -1295,12 +1318,19 @@ docs/                 — Reuse as reference
 | Inventory/notebook system | ✅ Yes | Data-driven |
 | Accusation system | ✅ Yes | Config in gameState.ts |
 | Day/night cycle | ✅ Yes | Timer + Director-driven |
-| NPC sentiment system | ✅ Yes | Generic emotional tracking |
+| NPC sentiment system | ✅ Yes | Generic emotional tracking + auto-nudging |
 | Game tools (tools.ts) | ✅ Yes | Character-agnostic |
 | SDK hooks (onPostToolUse) | ✅ Yes | Reactive side effects work for any NPCs |
 | Hidden room system | ✅ Yes | Data-driven room expansion |
 | Red herring NPC system | ✅ Yes | Random archetype pool, works with any level |
 | Phaser physics + collision | ✅ Yes | Data-driven from room defs |
+| NPC emotion visuals | ✅ Yes | Polls sentiments, renders floating icons/tints |
+| Crime replay system | ✅ Yes | Director generates + player navigates chapters |
+| Mystery generation | ✅ Yes | Skeleton Key + Creative Agency |
+| Weather/lighting/music | ✅ Yes | Setting-adaptive (configurable) |
+| NPC TTS / voice input | ✅ Yes | Browser Speech APIs |
+| Chase / timed events | ✅ Yes | Triggered by game events |
+| Director resilience | ✅ Yes | Auto-retry + fallback pairs |
 | Character system prompts | ❌ Per-level | Unique to each mystery |
 | Director system prompt | ❌ Per-level | Needs full mystery knowledge |
 | Room layout / tile map | ❌ Per-level | Setting-specific |

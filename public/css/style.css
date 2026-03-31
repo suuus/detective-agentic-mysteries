@@ -117,7 +117,7 @@ body {
 }
 
 .portrait-frame {
-  width: 56px; height: 56px;
+  width: 96px; height: 96px;
   border: 2px solid var(--gold);
   border-radius: 4px;
   overflow: hidden;
@@ -128,6 +128,13 @@ body {
   width: 100%; height: 100%;
   background-size: cover;
   background-position: center;
+  image-rendering: pixelated;
+  transition: background-image 0.3s ease;
+}
+.portrait.portrait-sprite {
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center bottom;
 }
 
 .character-name {
@@ -506,6 +513,53 @@ body {
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* ── Accusation → Crime Replay (in-modal) ── */
+.accusation-replay {
+  margin-top: 20px;
+  animation: reconFadeIn 0.6s ease-out forwards;
+}
+.replay-chapter-title {
+  font-family: var(--font-heading);
+  color: var(--gold);
+  font-size: 1.15rem;
+  margin-bottom: 12px;
+}
+.replay-chapter-text {
+  font-family: var(--font-body);
+  color: var(--cream);
+  font-size: 0.95rem;
+  line-height: 1.7;
+  min-height: 60px;
+  white-space: pre-wrap;
+}
+.replay-progress {
+  margin-top: 14px;
+  color: rgba(232,220,200,0.4);
+  font-size: 0.8rem;
+}
+.replay-next-btn {
+  margin-top: 16px;
+}
+.replay-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: rgba(232,220,200,0.7);
+  font-size: 0.95rem;
+  margin-top: 16px;
+}
+.replay-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(201,168,76,0.3);
+  border-top-color: var(--gold);
+  border-radius: 50%;
+  animation: replaySpin 0.8s linear infinite;
+}
+@keyframes replaySpin {
+  to { transform: rotate(360deg); }
+}
+
 /* ══════════════════════════
    NIGHT CONVERSATION OVERLAY
    ══════════════════════════ */
@@ -642,6 +696,36 @@ body {
   border-radius: 2px;
   transition: width 1s linear;
 }
+.hud-clock { cursor: pointer; position: relative; }
+
+/* End Day popup */
+.end-day-popup {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 8px;
+  background: var(--panel-bg);
+  border: 1px solid var(--gold);
+  border-radius: 6px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 100;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+  animation: fadeIn 0.2s ease-out;
+  white-space: nowrap;
+}
+.end-day-popup.hidden { display: none; }
+.end-day-label {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  color: var(--cream);
+}
+.end-day-btn {
+  font-size: 0.8rem;
+  padding: 4px 12px;
+}
 
 /* Detective profile indicator */
 .hud-profile {
@@ -653,6 +737,17 @@ body {
   color: var(--cream);
   opacity: 0.7;
   padding: 0 8px;
+}
+
+.hud-floor {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-heading);
+  font-size: 0.8rem;
+  color: var(--gold);
+  padding: 0 8px;
+  border-left: 1px solid rgba(201, 168, 76, 0.3);
 }
 
 /* ══════════════════════════
@@ -800,3 +895,573 @@ body {
   border-radius: 4px; padding: 4px 8px; font-size: 12px;
 }
 .settings-actions { margin-top: 16px; text-align: right; }
+
+/* ══════════════════════════════════════════
+   GENERATION OVERLAY — Agents at Work
+   ══════════════════════════════════════════ */
+#generation-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(5, 3, 8, 0.97);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-body);
+  backdrop-filter: blur(4px);
+}
+
+#generation-panel {
+  width: min(680px, 92vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--panel-bg);
+  border: 1px solid rgba(201, 168, 76, 0.3);
+  border-radius: 8px;
+  padding: 28px 32px;
+  box-shadow: 0 0 60px rgba(0,0,0,0.8), 0 0 20px rgba(201,168,76,0.05);
+}
+
+#generation-panel h2 {
+  font-family: var(--font-heading);
+  color: var(--gold);
+  font-size: 1.4rem;
+  margin-bottom: 4px;
+  letter-spacing: 0.5px;
+}
+
+/* ── Pipeline steps ── */
+#gen-pipeline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.gen-step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.06);
+  background: rgba(255,255,255,0.02);
+  transition: all 0.3s ease;
+}
+
+.gen-step.active {
+  border-color: rgba(201, 168, 76, 0.5);
+  background: rgba(201, 168, 76, 0.07);
+  box-shadow: 0 0 12px rgba(201,168,76,0.1);
+}
+
+.gen-step.done {
+  border-color: rgba(80, 200, 120, 0.3);
+  background: rgba(80, 200, 120, 0.05);
+}
+
+.gen-step-icon {
+  font-size: 1.4rem;
+  width: 36px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.gen-step-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.gen-step-label {
+  font-family: var(--font-heading);
+  font-size: 0.9rem;
+  color: var(--cream);
+  letter-spacing: 0.3px;
+}
+
+.gen-step-desc {
+  font-size: 0.75rem;
+  opacity: 0.45;
+  margin-top: 1px;
+}
+
+.gen-step-state {
+  font-size: 0.75rem;
+  opacity: 0.4;
+  font-style: italic;
+  flex-shrink: 0;
+}
+
+.gen-step.active .gen-step-state {
+  opacity: 1;
+  color: var(--gold);
+  font-style: normal;
+  font-weight: bold;
+}
+
+.gen-step.active .gen-step-state::after {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  background: var(--gold);
+  border-radius: 50%;
+  animation: gen-pulse 1s ease-in-out infinite;
+  vertical-align: middle;
+}
+
+.gen-step.done .gen-step-state {
+  opacity: 0.8;
+  color: #6dcf93;
+  font-style: normal;
+}
+
+/* Creative sub-agent steps */
+.gen-substeps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-left: 24px;
+  padding-left: 12px;
+  border-left: 2px solid rgba(201,168,76,0.15);
+}
+.gen-substep {
+  padding: 6px 10px;
+  font-size: 0.85rem;
+}
+.gen-substep .gen-step-icon {
+  font-size: 1rem;
+  width: 28px;
+}
+.gen-substep .gen-step-label {
+  font-size: 0.8rem;
+}
+.gen-substep .gen-step-desc {
+  font-size: 0.7rem;
+}
+
+@keyframes gen-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.3; transform: scale(0.7); }
+}
+
+/* ── View toggle buttons ── */
+.gen-view-btn {
+  background: none;
+  border: 1px solid rgba(201,168,76,0.25);
+  border-radius: 4px;
+  color: var(--cream);
+  font-size: 1rem;
+  padding: 4px 8px;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: all 0.2s;
+}
+.gen-view-btn.active {
+  opacity: 1;
+  border-color: var(--gold);
+  background: rgba(201,168,76,0.12);
+}
+.gen-view-btn:hover { opacity: 0.8; }
+
+/* ── Network graph view ── */
+.gen-network {
+  position: relative;
+  width: 100%;
+  height: 420px;
+  margin-bottom: 20px;
+}
+.gen-network.hidden { display: none; }
+
+.gen-net-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.gen-net-line {
+  stroke: rgba(201,168,76,0.15);
+  stroke-width: 2;
+  stroke-dasharray: 8 4;
+  stroke-dashoffset: 0;
+  transition: stroke 0.5s, stroke-width 0.3s;
+}
+.gen-net-line.active {
+  stroke: rgba(201,168,76,0.6);
+  stroke-width: 2.5;
+  animation: net-flow 1s linear infinite;
+}
+.gen-net-line.done {
+  stroke: rgba(80,200,120,0.4);
+  stroke-width: 2;
+  stroke-dasharray: none;
+  animation: none;
+}
+.gen-net-sub-line {
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+
+@keyframes net-flow {
+  to { stroke-dashoffset: -24; }
+}
+
+.gen-net-node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  transition: all 0.4s ease;
+}
+.gen-net-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: rgba(20,15,25,0.9);
+  border: 2px solid rgba(201,168,76,0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  margin: 0 auto 4px;
+  transition: all 0.4s ease;
+}
+.gen-net-node.active .gen-net-icon {
+  border-color: var(--gold);
+  box-shadow: 0 0 20px rgba(201,168,76,0.35), 0 0 6px rgba(201,168,76,0.2);
+  animation: net-node-pulse 2s ease-in-out infinite;
+}
+.gen-net-node.done .gen-net-icon {
+  border-color: rgba(80,200,120,0.5);
+  box-shadow: 0 0 12px rgba(80,200,120,0.15);
+}
+.gen-net-label {
+  font-family: var(--font-heading);
+  font-size: 0.7rem;
+  color: rgba(232,220,200,0.5);
+  letter-spacing: 0.3px;
+  transition: color 0.3s;
+}
+.gen-net-node.active .gen-net-label { color: var(--gold); }
+.gen-net-node.done .gen-net-label { color: #6dcf93; }
+.gen-net-status {
+  font-size: 0.6rem;
+  color: rgba(232,220,200,0.35);
+  margin-top: 2px;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Sub-nodes (creative agents) */
+.gen-net-sub .gen-net-icon {
+  width: 38px;
+  height: 38px;
+  font-size: 1.1rem;
+  border-width: 1.5px;
+}
+.gen-net-sub .gen-net-label {
+  font-size: 0.6rem;
+}
+
+@keyframes net-node-pulse {
+  0%, 100% { box-shadow: 0 0 20px rgba(201,168,76,0.35); }
+  50%      { box-shadow: 0 0 30px rgba(201,168,76,0.55), 0 0 10px rgba(201,168,76,0.3); }
+}
+
+/* Data flow pills */
+.gen-net-data-items {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.gen-net-pill {
+  position: absolute;
+  background: rgba(201,168,76,0.15);
+  border: 1px solid rgba(201,168,76,0.3);
+  border-radius: 10px;
+  padding: 2px 8px;
+  font-size: 0.6rem;
+  color: var(--gold);
+  white-space: nowrap;
+  animation: net-pill-float 3s ease-out forwards;
+  pointer-events: none;
+}
+@keyframes net-pill-float {
+  0%   { opacity: 0; transform: translate(-50%, 0) scale(0.8); }
+  15%  { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  85%  { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -10px); }
+}
+
+/* ── Architecture view ── */
+.gen-arch {
+  position: relative;
+  width: 100%;
+  height: 500px;
+  margin-bottom: 20px;
+}
+.gen-arch.hidden { display: none; }
+
+.gen-arch-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.arch-line {
+  stroke: rgba(201,168,76,0.2);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  transition: stroke 0.5s, stroke-width 0.3s;
+}
+.arch-line.active {
+  stroke: rgba(201,168,76,0.7);
+  stroke-width: 2.5;
+  animation: net-flow 1.2s linear infinite;
+}
+.arch-line.done {
+  stroke: rgba(80,200,120,0.35);
+  stroke-dasharray: none;
+  animation: none;
+}
+.arch-tool { stroke-dasharray: 4 2; }
+.arch-async { stroke-dasharray: 2 3; stroke: rgba(160,140,200,0.2); }
+.arch-async.active { stroke: rgba(160,140,200,0.6); }
+.arch-hook { stroke-dasharray: 1 2; stroke: rgba(255,200,100,0.25); stroke-width: 1.5; }
+.arch-hook.active { stroke: rgba(255,200,100,0.6); }
+.arch-gen { stroke-dasharray: 8 4; stroke: rgba(120,180,255,0.2); }
+.arch-gen.active { stroke: rgba(120,180,255,0.6); }
+
+.arch-node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  transition: all 0.4s ease;
+  z-index: 2;
+}
+.arch-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(15,12,20,0.95);
+  border: 2px solid rgba(201,168,76,0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  margin: 0 auto 3px;
+  transition: all 0.4s ease;
+}
+.arch-node.active .arch-icon {
+  border-color: var(--gold);
+  box-shadow: 0 0 18px rgba(201,168,76,0.3), 0 0 6px rgba(201,168,76,0.15);
+  animation: net-node-pulse 2s ease-in-out infinite;
+}
+.arch-node.done .arch-icon {
+  border-color: rgba(80,200,120,0.45);
+  box-shadow: 0 0 10px rgba(80,200,120,0.1);
+}
+.arch-label {
+  font-family: var(--font-heading);
+  font-size: 0.65rem;
+  color: rgba(232,220,200,0.5);
+  letter-spacing: 0.3px;
+  transition: color 0.3s;
+}
+.arch-node.active .arch-label { color: var(--gold); }
+.arch-node.done .arch-label { color: #6dcf93; }
+.arch-detail {
+  font-size: 0.5rem;
+  color: rgba(232,220,200,0.25);
+  max-width: 90px;
+  margin: 0 auto;
+}
+
+/* Player node — slightly larger */
+.arch-player .arch-icon {
+  width: 52px; height: 52px;
+  border-color: rgba(100,200,255,0.3);
+}
+.arch-player .arch-label { color: rgba(100,200,255,0.7); }
+
+/* GameState — rectangular */
+.arch-state .arch-icon {
+  border-radius: 8px;
+  width: 56px; height: 44px;
+  font-size: 1.2rem;
+  border-color: rgba(255,200,100,0.3);
+}
+
+/* NPC row — individual NPC agent cards in the architecture diagram */
+.arch-npc-row {
+  position: absolute;
+  top: 140px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  flex-wrap: wrap;
+  max-width: 600px;
+  z-index: 2;
+}
+.arch-npc-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 5px 8px 4px;
+  border-radius: 6px;
+  border: 1.5px solid rgba(201,168,76,0.15);
+  background: rgba(15,12,20,0.9);
+  min-width: 60px;
+  transition: all 0.4s ease;
+  animation: arch-npc-appear 0.4s ease-out;
+}
+.arch-npc-card.active {
+  border-color: rgba(201,168,76,0.5);
+  box-shadow: 0 0 12px rgba(201,168,76,0.2);
+}
+.arch-npc-card.done {
+  border-color: rgba(80,200,120,0.4);
+  box-shadow: 0 0 8px rgba(80,200,120,0.1);
+}
+.arch-npc-card .arch-npc-emoji {
+  font-size: 1.1rem;
+  margin-bottom: 1px;
+}
+.arch-npc-card .arch-npc-name {
+  font-family: var(--font-heading);
+  font-size: 0.5rem;
+  color: rgba(232,220,200,0.6);
+  max-width: 65px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+}
+.arch-npc-card .arch-npc-role {
+  font-size: 0.4rem;
+  color: rgba(232,220,200,0.3);
+  max-width: 65px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.arch-npc-card.done .arch-npc-name { color: #6dcf93; }
+@keyframes arch-npc-appear {
+  from { opacity: 0; transform: scale(0.7) translateY(6px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* Flow labels */
+.arch-flow-label {
+  position: absolute;
+  font-size: 0.55rem;
+  color: rgba(201,168,76,0.35);
+  font-family: var(--font-body);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+}
+
+/* Legend */
+.arch-legend {
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 14px;
+  font-size: 0.55rem;
+  color: rgba(232,220,200,0.35);
+}
+.arch-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.arch-legend-line {
+  display: inline-block;
+  width: 16px;
+  height: 2px;
+}
+.arch-legend-solid { background: rgba(201,168,76,0.5); }
+.arch-legend-dashed { background: repeating-linear-gradient(90deg, rgba(160,140,200,0.5) 0 3px, transparent 3px 5px); height: 2px; }
+.arch-legend-hook { background: repeating-linear-gradient(90deg, rgba(255,200,100,0.5) 0 2px, transparent 2px 4px); height: 1.5px; }
+.arch-legend-gen { background: repeating-linear-gradient(90deg, rgba(120,180,255,0.5) 0 4px, transparent 4px 6px); height: 2px; }
+
+/* ── Live reasoning log ── */
+#gen-log-container {
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 6px;
+  background: rgba(0,0,0,0.35);
+  overflow: hidden;
+}
+
+#gen-log-header {
+  font-family: var(--font-heading);
+  font-size: 0.8rem;
+  color: var(--gold);
+  opacity: 0.8;
+  padding: 8px 14px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+#gen-log {
+  padding: 12px 14px;
+  max-height: 280px;
+  overflow-y: auto;
+  font-size: 0.82rem;
+  line-height: 1.65;
+  font-family: 'Courier New', monospace;
+  scroll-behavior: smooth;
+}
+
+.gen-log-entry {
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  animation: gen-entry-in 0.25s ease;
+  color: var(--cream);
+  opacity: 0.8;
+}
+
+.gen-log-entry:last-child { border-bottom: none; }
+
+.gen-log-entry.entry-status {
+  color: var(--gold);
+  opacity: 0.9;
+}
+
+.gen-log-entry.entry-data {
+  color: rgba(232, 220, 200, 0.65);
+  padding-left: 12px;
+}
+
+.gen-log-entry.entry-data::before {
+  content: '› ';
+  opacity: 0.4;
+}
+
+.gen-log-entry.entry-complete {
+  color: #6dcf93;
+  opacity: 1;
+  font-weight: bold;
+}
+
+.gen-log-entry.entry-error {
+  color: #e06c75;
+  opacity: 1;
+}
+
+@keyframes gen-entry-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

@@ -54,7 +54,9 @@ export class DialogManager {
     this.currentCharacter = characterId;
     this.currentCharacterName = characterName;
     this.nameEl.textContent = characterName;
-    this.portrait.style.backgroundImage = `url('assets/portraits/${characterId}.png')`;
+
+    // Use mood-variant portrait texture, fall back to base portrait, NPC sprite, then placeholder
+    this._updatePortrait(characterId);
 
     // Render previous messages for this character
     this._renderHistory();
@@ -244,6 +246,37 @@ export class DialogManager {
     this.historyEl.scrollTop = this.historyEl.scrollHeight;
   }
 
+  /** Update the portrait image to match current mood variant */
+  _updatePortrait(characterId) {
+    const charId = characterId || this.currentCharacter;
+    if (!charId) return;
+    const game = window._phaserGame;
+    if (!game) return;
+
+    const variant = window._npcMoodVariants?.[charId] || 'neutral';
+    const variantPortraitKey = variant === 'neutral' ? `portrait_${charId}` : `portrait_${charId}_${variant}`;
+    const basePortraitKey = `portrait_${charId}`;
+    const npcKey = `npc_${charId}`;
+
+    let texKey = null;
+    let isPortrait = false;
+    if (game.textures?.exists(variantPortraitKey)) { texKey = variantPortraitKey; isPortrait = true; }
+    else if (game.textures?.exists(basePortraitKey)) { texKey = basePortraitKey; isPortrait = true; }
+    else if (game.textures?.exists(npcKey)) { texKey = npcKey; isPortrait = false; }
+
+    if (texKey) {
+      const dataUrl = game.textures.getBase64(texKey);
+      this.portrait.style.backgroundImage = `url('${dataUrl}')`;
+      this.portrait.style.imageRendering = 'pixelated';
+      // Real portraits (128x160) use cover; game sprites use contain so they don't stretch
+      this.portrait.classList.toggle('portrait-sprite', !isPortrait);
+    } else {
+      this.portrait.style.backgroundImage = `url('assets/portraits/${charId}.png')`;
+      this.portrait.style.imageRendering = '';
+      this.portrait.classList.remove('portrait-sprite');
+    }
+  }
+
   async _updateSentimentIndicator() {
     if (!this.currentCharacter) return;
     try {
@@ -269,6 +302,9 @@ export class DialogManager {
         </div>
       `;
       moodEl.classList.remove('hidden');
+
+      // Swap portrait to match mood
+      this._updatePortrait(this.currentCharacter);
     } catch(err) {
       console.warn('Sentiment fetch failed:', err);
     }

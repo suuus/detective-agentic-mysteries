@@ -65,6 +65,7 @@ const config = {
 };
 
 const game = new Phaser.Game(config);
+window._phaserGame = game;  // Expose for dialog portraits
 
 // Register all scenes manually (none auto-start)
 game.scene.add('BootScene', BootScene);
@@ -109,33 +110,513 @@ document.querySelectorAll('.level-btn').forEach(btn => {
     currentLevel = levelId;
 
     if (levelId === 'random') {
-      // Show generation progress
-      const btnText = btn.innerHTML;
-      btn.disabled = true;
-      btn.innerHTML = '<strong>🎲 Generating mystery...</strong><br><span id="gen-status" style="font-size:0.85rem;opacity:0.7">Designing the crime scene...</span>';
+      // Show the full-screen generation overlay
+      const overlay = document.getElementById('generation-overlay');
+      const genLog = document.getElementById('gen-log');
+      const genSubtitle = document.getElementById('gen-panel-subtitle');
 
-      try {
-        for await (const update of api.generateMystery()) {
-          const statusEl = document.getElementById('gen-status');
-          if (statusEl) statusEl.textContent = update.status || 'Working...';
-          if (update.error) throw new Error(update.status);
+      // Reset all pipeline steps
+      ['architect','characters','director','creative','world'].forEach(id => {
+        const el = document.getElementById('gen-step-' + id);
+        if (el) {
+          el.classList.remove('active','done');
+          el.querySelector('.gen-step-state').textContent = 'waiting';
+        }
+      });
+      // Reset creative sub-agent steps
+      ['creative-env','creative-props','creative-chars'].forEach(id => {
+        const el = document.getElementById('gen-step-' + id);
+        if (el) {
+          el.classList.remove('active','done','failed');
+          el.querySelector('.gen-step-state').textContent = 'waiting';
+        }
+      });
+      if (genLog) genLog.innerHTML = '';
+      if (genSubtitle) genSubtitle.textContent = 'Your AI agents are designing a unique mystery...';
+
+      // ── View toggle (list vs network vs architecture) ──
+      const pipelineEl = document.getElementById('gen-pipeline');
+      const networkEl = document.getElementById('gen-network');
+      const archEl = document.getElementById('gen-arch');
+      const listBtn = document.getElementById('gen-view-list-btn');
+      const graphBtn = document.getElementById('gen-view-graph-btn');
+      const archBtn = document.getElementById('gen-view-arch-btn');
+      const savedView = localStorage.getItem('gen-view') || 'list';
+
+      function setGenView(view) {
+        pipelineEl.style.display = 'none';
+        networkEl.classList.add('hidden');
+        archEl.classList.add('hidden');
+        listBtn.classList.remove('active');
+        graphBtn.classList.remove('active');
+        archBtn.classList.remove('active');
+        if (view === 'graph') {
+          networkEl.classList.remove('hidden');
+          graphBtn.classList.add('active');
+        } else if (view === 'arch') {
+          archEl.classList.remove('hidden');
+          archBtn.classList.add('active');
+        } else {
+          pipelineEl.style.display = '';
+          listBtn.classList.add('active');
+        }
+        localStorage.setItem('gen-view', view);
+      }
+      setGenView(savedView);
+      listBtn.addEventListener('click', () => setGenView('list'));
+      graphBtn.addEventListener('click', () => setGenView('graph'));
+      archBtn.addEventListener('click', () => setGenView('arch'));
+
+      // ── Network graph helpers ──
+      // Connection line mapping: when a step activates, which lines light up?
+      const NET_LINES = {
+        architect:  { incoming: [], outgoing: ['net-line-arch-char'] },
+        characters: { incoming: ['net-line-arch-char'], outgoing: ['net-line-char-dir'] },
+        director:   { incoming: ['net-line-char-dir'], outgoing: ['net-line-dir-creative'] },
+        creative:   { incoming: ['net-line-dir-creative'], outgoing: ['net-line-cr-env','net-line-cr-props','net-line-cr-chars','net-line-creative-world'] },
+        world:      { incoming: ['net-line-creative-world'], outgoing: ['net-line-world-dp'] },
+        dp:         { incoming: ['net-line-world-dp'], outgoing: [] },
+      };
+      const NET_SUB_MAP = {
+        env: 'creative-env',
+        props: 'creative-props',
+        chars: 'creative-chars',
+      };
+
+      function setNetNodeState(stepId, state) {
+        const node = document.getElementById('net-node-' + stepId);
+        if (!node) return;
+        node.classList.remove('active','done');
+        if (state === 'active' || state === 'done') node.classList.add(state);
+
+        const lineConfig = NET_LINES[stepId];
+        if (!lineConfig) return;
+        if (state === 'active') {
+          for (const lid of lineConfig.incoming) {
+            const line = document.getElementById(lid);
+            if (line) { line.classList.remove('done'); line.classList.add('active'); }
+          }
+        } else if (state === 'done') {
+          for (const lid of lineConfig.incoming) {
+            const line = document.getElementById(lid);
+            if (line) { line.classList.remove('active'); line.classList.add('done'); }
+          }
+        }
+      }
+
+      function setNetSubState(sub, state) {
+        const nodeId = NET_SUB_MAP[sub];
+        if (!nodeId) return;
+        const node = document.getElementById('net-node-' + nodeId);
+        if (!node) return;
+        node.classList.remove('active','done');
+        if (state === 'active' || state === 'done') node.classList.add(state);
+        // Sub-lines
+        const lineId = 'net-line-cr-' + sub;
+        const line = document.getElementById(lineId);
+        if (line) {
+          line.classList.remove('active','done');
+          if (state === 'active') line.classList.add('active');
+          else if (state === 'done') line.classList.add('done');
+        }
+      }
+
+      function addNetDataPill(text, x, y) {
+        const container = document.getElementById('gen-net-data-items');
+        if (!container) return;
+        const pill = document.createElement('div');
+        pill.className = 'gen-net-pill';
+        pill.textContent = text;
+        pill.style.left = x + 'px';
+        pill.style.top = y + 'px';
+        container.appendChild(pill);
+        setTimeout(() => pill.remove(), 3200);
+      }
+
+      // Reset network nodes
+      document.querySelectorAll('.gen-net-node').forEach(n => n.classList.remove('active','done'));
+      document.querySelectorAll('.gen-net-line').forEach(l => l.classList.remove('active','done'));
+      const netDataItems = document.getElementById('gen-net-data-items');
+      if (netDataItems) netDataItems.innerHTML = '';
+
+      // ── Architecture view helpers ──
+      // Track NPC card positions for dynamic SVG line drawing
+      const archNpcCards = []; // { id, name, el }
+
+      function archDrawLines() {
+        const svg = document.getElementById('gen-arch-svg');
+        if (!svg) return;
+        svg.innerHTML = '';
+        const archRect = document.getElementById('gen-arch')?.getBoundingClientRect();
+        if (!archRect) return;
+
+        function nodeCenter(id) {
+          const el = document.getElementById(id);
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          return { x: r.left + r.width / 2 - archRect.left, y: r.top + r.height / 2 - archRect.top };
+        }
+        function npcCenter(cardEl) {
+          const r = cardEl.getBoundingClientRect();
+          return { x: r.left + r.width / 2 - archRect.left, y: r.top + r.height / 2 - archRect.top };
+        }
+        function addLine(from, to, cls) {
+          if (!from || !to) return;
+          const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+          line.setAttribute('x1', from.x); line.setAttribute('y1', from.y);
+          line.setAttribute('x2', to.x); line.setAttribute('y2', to.y);
+          line.setAttribute('class', 'arch-line ' + cls);
+          svg.appendChild(line);
         }
 
+        const player = nodeCenter('arch-node-player');
+        const director = nodeCenter('arch-node-director');
+        const state = nodeCenter('arch-node-state');
+        const profiler = nodeCenter('arch-node-profiler');
+        const narrator = nodeCenter('arch-node-narrator');
+        const forensics = nodeCenter('arch-node-forensics');
+        const skeleton = nodeCenter('arch-node-skeleton');
+        const creative = nodeCenter('arch-node-creative');
+        const dp = nodeCenter('arch-node-dp');
+
+        // Player → Profiler
+        addLine(player, profiler, 'arch-async done');
+        // Player → GameState
+        addLine(player, state, 'done');
+        // Director → GameState
+        addLine(director, state, 'arch-gen done');
+        // GameState → Narrator
+        addLine(state, narrator, 'arch-async done');
+        // GameState → Forensics
+        addLine(state, forensics, 'arch-async done');
+        // Skeleton Key → Director
+        addLine(skeleton, director, 'arch-gen done');
+        // Creative → Skeleton Key
+        addLine(creative, skeleton, 'arch-gen done');
+        // DP → Creative (visual QA feedback)
+        addLine(dp, creative, 'arch-gen done');
+
+        // NPC connections — each NPC connects to Player, Director, GameState, and each other
+        for (const npc of archNpcCards) {
+          const c = npcCenter(npc.el);
+          // Player ↔ NPC (interrogation)
+          addLine(player, c, 'done');
+          // NPC → GameState (tool calls)
+          addLine(c, state, 'arch-tool done');
+          // Director ↔ NPC (night conversations)
+          addLine(director, c, 'arch-gen done');
+        }
+        // NPC ↔ NPC gossip lines (hooks) — connect adjacent pairs
+        for (let i = 0; i < archNpcCards.length - 1; i++) {
+          const a = npcCenter(archNpcCards[i].el);
+          const b = npcCenter(archNpcCards[i + 1].el);
+          addLine(a, b, 'arch-hook done');
+        }
+
+        // Update SVG viewBox to match container
+        svg.setAttribute('viewBox', `0 0 ${archRect.width} ${archRect.height}`);
+      }
+
+      function setArchState(stepId, state) {
+        // Light up system nodes based on generation step
+        const nodeMap = {
+          architect: ['skeleton', 'state'],
+          characters: [],
+          director: ['director'],
+          creative: ['creative'],
+          world: ['state'],
+          dp: ['dp'],
+        };
+        const nodeIds = nodeMap[stepId] || [];
+        for (const nid of nodeIds) {
+          const node = document.getElementById('arch-node-' + nid);
+          if (node) { node.classList.remove('active','done'); if (state) node.classList.add(state); }
+        }
+      }
+
+      function addArchNpc(name, role) {
+        const row = document.getElementById('arch-npc-row');
+        if (!row) return;
+        const card = document.createElement('div');
+        card.className = 'arch-npc-card active';
+        // Pick an emoji based on role keywords
+        const roleLC = (role || '').toLowerCase();
+        let emoji = '🧑';
+        if (roleLC.includes('doctor') || roleLC.includes('physician') || roleLC.includes('medic')) emoji = '👨‍⚕️';
+        else if (roleLC.includes('chef') || roleLC.includes('cook')) emoji = '👨‍🍳';
+        else if (roleLC.includes('captain') || roleLC.includes('officer')) emoji = '👮';
+        else if (roleLC.includes('maid') || roleLC.includes('housekeeper') || roleLC.includes('servant')) emoji = '🧹';
+        else if (roleLC.includes('wife') || roleLC.includes('lady') || roleLC.includes('woman') || roleLC.includes('daughter') || roleLC.includes('sister') || roleLC.includes('hostess') || roleLC.includes('actress')) emoji = '👩';
+        else if (roleLC.includes('artist') || roleLC.includes('painter') || roleLC.includes('musician')) emoji = '🎨';
+        else if (roleLC.includes('lawyer') || roleLC.includes('attorney') || roleLC.includes('judge')) emoji = '⚖️';
+        else if (roleLC.includes('business') || roleLC.includes('partner') || roleLC.includes('investor') || roleLC.includes('dealer')) emoji = '💼';
+        else if (roleLC.includes('guard') || roleLC.includes('security') || roleLC.includes('bodyguard')) emoji = '🛡️';
+        else if (roleLC.includes('scientist') || roleLC.includes('professor') || roleLC.includes('researcher')) emoji = '🔬';
+        else if (roleLC.includes('journalist') || roleLC.includes('reporter') || roleLC.includes('writer')) emoji = '📰';
+        else if (roleLC.includes('bartender') || roleLC.includes('waiter')) emoji = '🍸';
+        card.innerHTML = `<div class="arch-npc-emoji">${emoji}</div><div class="arch-npc-name" title="${name}">${name.split(' ')[0]}</div><div class="arch-npc-role">${role || 'suspect'}</div>`;
+        row.appendChild(card);
+        archNpcCards.push({ name, el: card });
+        // Re-draw lines after layout settles
+        requestAnimationFrame(() => requestAnimationFrame(archDrawLines));
+      }
+
+      // Reset architecture view
+      document.querySelectorAll('.arch-node').forEach(n => n.classList.remove('active','done'));
+      const archNpcRow = document.getElementById('arch-npc-row');
+      if (archNpcRow) archNpcRow.innerHTML = '';
+      archNpcCards.length = 0;
+      const archSvg = document.getElementById('gen-arch-svg');
+      if (archSvg) archSvg.innerHTML = '';
+
+      overlay.classList.remove('hidden');
+      levelSelect.classList.add('hidden');
+
+      /** Append a styled entry to the reasoning log */
+      function logEntry(text, cls = '') {
+        const div = document.createElement('div');
+        div.className = 'gen-log-entry' + (cls ? ' ' + cls : '');
+        div.textContent = text;
+        genLog.appendChild(div);
+        genLog.scrollTop = genLog.scrollHeight;
+      }
+
+      /** Mark a pipeline step active/done (both list + network + arch views) */
+      function setStepState(stepId, state) {
+        const el = document.getElementById('gen-step-' + stepId);
+        if (!el) return;
+        el.classList.remove('active','done');
+        if (state === 'active') {
+          el.classList.add('active');
+          el.querySelector('.gen-step-state').textContent = 'working...';
+        } else if (state === 'done') {
+          el.classList.add('done');
+          el.querySelector('.gen-step-state').textContent = '✓ done';
+        }
+        // Also update network graph + architecture view
+        setNetNodeState(stepId, state);
+        setArchState(stepId, state);
+      }
+
+      // Map agent names → pipeline step IDs
+      const agentToStep = {
+        architect: 'architect',
+        character_writer: 'characters',
+        director: 'director',
+        creative: 'creative',
+        world_builder: 'world',
+        dp: 'dp',
+      };
+
+      try {
+        // Fire-and-forget: start generation on server
+        await api.startGeneration();
+
+        // Poll for events until complete
+        let nextIdx = 0;
+        const delay = (ms) => new Promise(r => setTimeout(r, ms));
+        let done = false;
+
+        while (!done) {
+          await delay(1000);
+          let data;
+          try {
+            data = await api.pollGeneration(nextIdx);
+          } catch { continue; } // retry on network blip
+
+          for (const update of data.events) {
+            nextIdx++;
+            const phase = update.phase;
+
+          // Ignore server keepalive heartbeats
+          if (phase === 'heartbeat') continue;
+
+          if (phase === 'thinking') {
+            // Mark the active step; also auto-complete the previous step
+            const stepId = agentToStep[update.agent];
+            if (stepId) {
+              // Complete any previously active step
+              ['architect','characters','director','creative','world'].forEach(id => {
+                const el = document.getElementById('gen-step-' + id);
+                if (el && el.classList.contains('active') && id !== stepId) {
+                  el.classList.remove('active');
+                  el.classList.add('done');
+                  el.querySelector('.gen-step-state').textContent = '✓ done';
+                }
+              });
+              setStepState(stepId, 'active');
+            }
+            logEntry(update.status, 'entry-status');
+
+          } else if (phase === 'skeleton_done') {
+            setStepState('architect', 'done');
+            logEntry(`📖 Title: "${update.title}"`, 'entry-data');
+            logEntry(`📍 Setting: ${update.setting}`, 'entry-data');
+            if (update.crime) logEntry(`🔪 Crime: ${update.crime}`, 'entry-data');
+            if (Array.isArray(update.characters)) {
+              logEntry(`👥 Suspects: ${update.characters.map(c => `${c.name} (${c.role})`).join(', ')}`, 'entry-data');
+              addNetDataPill(`${update.characters.length} suspects`, 210, 65);
+            }
+            if (Array.isArray(update.rooms)) {
+              logEntry(`🏠 Rooms: ${update.rooms.join(', ')}`, 'entry-data');
+              addNetDataPill(`${update.rooms.length} rooms`, 210, 90);
+            }
+
+          } else if (phase === 'character_done') {
+            logEntry(`✅ ${update.characterName} - ${update.characterRole}`, 'entry-data');
+            addNetDataPill(update.characterName, 390, 65);
+            addArchNpc(update.characterName, update.characterRole);
+
+          } else if (phase === 'director_done') {
+            setStepState('director', 'done');
+
+          } else if (phase === 'creative_done') {
+            setStepState('creative', 'done');
+
+          } else if (phase === 'creative_sub') {
+            const subEl = document.getElementById('gen-step-creative-' + update.sub);
+            if (subEl) {
+              subEl.classList.remove('active','done','failed');
+              if (update.state === 'active') {
+                subEl.classList.add('active');
+                subEl.querySelector('.gen-step-state').textContent = 'working...';
+              } else if (update.state === 'done') {
+                subEl.classList.add('done');
+                subEl.querySelector('.gen-step-state').textContent = '✓ done';
+              } else if (update.state === 'failed') {
+                subEl.classList.add('done');
+                subEl.querySelector('.gen-step-state').textContent = '⚠ retry';
+                subEl.style.borderColor = 'rgba(244,67,54,0.3)';
+              }
+            }
+            // Update network sub-nodes
+            setNetSubState(update.sub, update.state === 'failed' ? 'done' : update.state);
+            if (update.palette) {
+              const p = update.palette;
+              logEntry(`🎨 Style: ${p.furnitureStyle || '-'} | Weather: ${p.weather || '-'} | Layout: ${p.roomLayout || '-'}`, 'entry-data');
+            }
+            if (update.designedItems?.length) {
+              logEntry(`🖼️ Designed: ${update.designedItems.join(', ')}`, 'entry-data');
+            }
+            if (update.ambientPropNames?.length) {
+              logEntry(`✨ Ambient props: ${update.ambientPropNames.join(', ')}`, 'entry-data');
+            }
+            if (update.hasCustomWallTile) {
+              logEntry(`🧱 Custom wall material designed`, 'entry-data');
+            }
+
+          } else if (phase === 'complete') {
+            setStepState('world', 'done');
+            // Show what creative assets were assembled into the world
+            if (update.decorationCount > 0 || update.ambientPropCount > 0) {
+              logEntry(`🎨 Creative assets applied: ${update.decorationCount} room decoration groups, ${update.ambientPropCount} ambient props${update.wallTileCount > 0 ? ', custom wall material' : ''}`, 'entry-data');
+            }
+            if (update.roomCount) {
+              const floorNote = update.multiFloor ? ` across 2 floors` : '';
+              logEntry(`🏠 ${update.roomCount} rooms placed${floorNote}`, 'entry-data');
+            }
+            logEntry(`🎉 "${update.title}" is ready -- ${update.suspects} suspects, ${update.evidenceCount} clues`, 'entry-complete');
+            if (genSubtitle) genSubtitle.textContent = `"${update.title}" -- entering the scene...`;
+            // Light up all runtime architecture nodes to show the full system is ready
+            ['player','director','profiler','state','narrator','forensics','dp'].forEach(nid => {
+              const n = document.getElementById('arch-node-' + nid);
+              if (n) { n.classList.remove('active'); n.classList.add('done'); }
+            });
+            // Mark all NPC cards as done
+            for (const npc of archNpcCards) {
+              npc.el.classList.remove('active');
+              npc.el.classList.add('done');
+            }
+            archDrawLines();
+
+          } else if (phase === 'error' || update.error) {
+            logEntry(update.status || 'Generation failed', 'entry-error');
+            throw new Error(update.status);
+          }
+          }  // end for (events)
+
+          // Check if generation is complete
+          if (data.complete) {
+            // Check if we got the 'complete' phase event
+            const gotComplete = data.events.some(e => e.phase === 'complete');
+            if (gotComplete) { done = true; break; }
+            // complete but no complete event = error happened, check for error
+            const gotError = data.events.some(e => e.phase === 'error' || e.error);
+            if (gotError) break; // error was already thrown above
+            done = true; break;
+          }
+          if (!data.inProgress && !data.complete && nextIdx > 0) {
+            done = true; break; // generation ended
+          }
+        }  // end while (!done)
+
         await api.selectLevel('random');
+
+        // ── Director of Photography: Visual QA ──
+        setStepState('dp', 'active');
+        setArchState('dp', 'active');
+        logEntry('🎬 Director of Photography reviewing visual quality...', 'entry-status');
+        try {
+          const dpReview = await api.dpReview();
+          if (dpReview.overallScore !== undefined) {
+            const emoji = dpReview.overallScore >= 7 ? '✅' : dpReview.overallScore >= 5 ? '⚠️' : '❌';
+            logEntry(`${emoji} Visual QA: ${dpReview.overallScore}/10 — ${dpReview.overallNotes || ''}`, dpReview.overallScore >= 5 ? 'entry-data' : 'entry-error');
+            if (dpReview.issues?.length > 0) {
+              const issueText = dpReview.issues.slice(0, 5).map(i => `  [${i.severity}] ${i.category}${i.item ? ' "' + i.item + '"' : ''}: ${i.description}`).join('\n');
+              logEntry(`🔍 ${dpReview.issues.length} issues:\n${issueText}`, 'entry-data');
+            }
+          }
+          setStepState('dp', 'done');
+          setArchState('dp', 'done');
+        } catch (err) {
+          console.warn('DP review failed (non-blocking):', err.message);
+          logEntry('🎬 DP review skipped (timeout or unavailable)', 'entry-data');
+          setStepState('dp', 'done');
+          setArchState('dp', 'done');
+        }
 
         // Build suspects list from generated characters
         const chars = await api.getCharacters();
         LEVEL_SUSPECTS.random = chars.map(c => ({ id: c.id, name: c.name }));
       } catch(err) {
         console.error('Mystery generation failed:', err);
-        btn.innerHTML = btnText;
-        btn.disabled = false;
+        // Show error + retry in the overlay instead of hiding it
+        const errorBar = document.getElementById('gen-error-bar');
+        const errorMsg = document.getElementById('gen-error-msg');
+        if (errorBar && errorMsg) {
+          errorMsg.textContent = `Generation failed: ${err.message || 'Connection lost'}. You can retry.`;
+          errorBar.classList.remove('hidden');
+
+          // Retry button — re-click the same level button
+          document.getElementById('gen-retry-btn')?.addEventListener('click', () => {
+            errorBar.classList.add('hidden');
+            // Reset steps
+            ['architect','characters','director','creative','world'].forEach(id => {
+              const el = document.getElementById('gen-step-' + id);
+              if (el) { el.classList.remove('active','done'); el.querySelector('.gen-step-state').textContent = 'waiting'; }
+            });
+            ['creative-env','creative-props','creative-chars'].forEach(id => {
+              const el = document.getElementById('gen-step-' + id);
+              if (el) { el.classList.remove('active','done','failed'); el.querySelector('.gen-step-state').textContent = 'waiting'; el.style.borderColor = ''; }
+            });
+            const genLog = document.getElementById('gen-log');
+            if (genLog) genLog.innerHTML = '';
+            btn.click();
+          }, { once: true });
+
+          // Back button — return to level select
+          document.getElementById('gen-back-btn')?.addEventListener('click', () => {
+            overlay.classList.add('hidden');
+            levelSelect.classList.remove('hidden');
+          }, { once: true });
+        } else {
+          overlay.classList.add('hidden');
+          levelSelect.classList.remove('hidden');
+        }
         return;
       }
 
-      btn.innerHTML = btnText;
-      btn.disabled = false;
-      levelSelect.classList.add('hidden');
+      overlay.classList.add('hidden');
 
       // Use dedicated RandomBootScene for generated mysteries
       game.scene.start('RandomBootScene');
@@ -173,6 +654,37 @@ document.getElementById('hud-notebook').addEventListener('click', () => {
 document.getElementById('hud-accuse').addEventListener('click', () => {
   openAccusationModal();
 });
+
+// ── End Day popup (click clock to toggle) ───────────────────────
+{
+  const clockEl = document.getElementById('hud-clock');
+  const popup = document.getElementById('end-day-popup');
+  const endBtn = document.getElementById('end-day-btn');
+
+  clockEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    popup.classList.toggle('hidden');
+  });
+
+  // Close popup when clicking elsewhere
+  document.addEventListener('click', () => {
+    popup.classList.add('hidden');
+  });
+  popup.addEventListener('click', (e) => e.stopPropagation());
+
+  endBtn.addEventListener('click', () => {
+    popup.classList.add('hidden');
+    // Find the active manor scene and trigger night
+    const sceneKeys = ['ManorScene', 'CruiseManorScene', 'RandomManorScene'];
+    for (const key of sceneKeys) {
+      const s = game?.scene?.getScene(key);
+      if (s && s.scene.isActive() && !s.transitioning && !s.isNight) {
+        s._triggerNight();
+        break;
+      }
+    }
+  });
+}
 
 document.getElementById('btn-flashlight').addEventListener('click', () => {
   // Find the active manor-type scene and toggle its flashlight
@@ -230,6 +742,25 @@ async function openModelSettings() {
     });
   });
   settingsModels.appendChild(langRow);
+
+  // Game mode setting
+  let modeData = { mode: 'normal' };
+  try { modeData = await (await fetch('/api/settings/mode')).json(); } catch {}
+  const modeRow = document.createElement('div');
+  modeRow.className = 'settings-row';
+  modeRow.innerHTML = `<label>🧠 Game Mode</label><select id="mode-select">
+    <option value="normal" ${modeData.mode === 'normal' ? 'selected' : ''}>Normal</option>
+    <option value="psychological" ${modeData.mode === 'psychological' ? 'selected' : ''}>🌀 Psychological</option>
+  </select>
+  <div style="font-size:0.7rem;opacity:0.4;margin-top:4px;grid-column:1/-1">Psychological mode: NPCs gaslight, shift details, and create doubt. The narrator becomes unreliable. Not for the faint of heart.</div>`;
+  modeRow.querySelector('select').addEventListener('change', async (e) => {
+    await fetch('/api/settings/mode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: e.target.value }),
+    });
+  });
+  settingsModels.appendChild(modeRow);
 
   // Model settings
   for (const [agent, label] of Object.entries(AGENT_LABELS)) {
@@ -365,12 +896,30 @@ submitBtn.addEventListener('click', async () => {
       resultEl.className = 'accusation-result correct';
       resultEl.textContent = result.message ?? 'Correct! Case solved.';
       window.dispatchEvent(new CustomEvent('correct-accusation'));
-      // Show win screen after a brief pause
-      setTimeout(() => {
-        accusationModal.classList.add('hidden');
-        window.setMusicMood?.('calm');
-        showEndScreen(true, result.message ?? 'You solved the mystery of Blackwood Manor!');
-      }, 2000);
+      // Hide the accusation form elements, keep the modal open
+      submitBtn.style.display = 'none';
+      cancelBtn.style.display = 'none';
+      suspectSelect.closest('label')?.nextElementSibling === suspectSelect
+        ? suspectSelect.style.display = 'none'
+        : null;
+      // Hide form inputs but keep the result message visible
+      for (const el of accusationModal.querySelectorAll('label, select, textarea, fieldset, .modal-actions, .attempts-info, h2')) {
+        el.style.display = 'none';
+      }
+      window.setMusicMood?.('calm');
+
+      // Start reconstruction inside the modal
+      const winMessage = result.message ?? 'You solved the mystery of Blackwood Manor!';
+      playReconstruction(api)
+        .catch(err => console.warn('Reconstruction skipped:', err.message))
+        .finally(() => {
+          accusationModal.classList.add('hidden');
+          // Reset hidden form elements for potential reuse
+          for (const el of accusationModal.querySelectorAll('[style*="display: none"]')) {
+            el.style.display = '';
+          }
+          showEndScreen(true, winMessage);
+        });
     } else {
       attemptsRemaining--;
       attemptsEl.textContent = `Attempts remaining: ${attemptsRemaining}`;
@@ -397,14 +946,9 @@ submitBtn.addEventListener('click', async () => {
 
 function showEndScreen(won, message) {
   if (won) {
-    // Play cinematic reconstruction first, then show the end screen
-    playReconstruction(api)
-      .catch(err => console.warn('Reconstruction skipped:', err.message))
-      .finally(() => {
-        endTitle.textContent = '🏆 Case Solved';
-        endMessage.textContent = message;
-        endScreen.classList.remove('hidden');
-      });
+    endTitle.textContent = '🏆 Case Solved';
+    endMessage.textContent = message;
+    endScreen.classList.remove('hidden');
   } else {
     endTitle.textContent = '💀 Case Closed';
     endMessage.textContent = message;

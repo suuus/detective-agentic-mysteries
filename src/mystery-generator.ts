@@ -1,4 +1,5 @@
 import type { Evidence, NPCSentiment } from "./gameState.js";
+import type { CreativeAssets } from "./creative-agent.js";
 
 export interface GeneratedMystery {
   title: string;
@@ -9,8 +10,11 @@ export interface GeneratedMystery {
   visual?: { wallColor: string; wallAccent: string; accentColor: string; ambientTint: string; furnitureStyle: string; roomLayout: string; weather: string };
   characters: { id: string; name: string; role: string; location: string; motive: string; secret: string; alibi: string; personality: string; isKiller: boolean; systemPrompt: string; spriteColors?: { body: string; hair: string } }[];
   evidence: (Evidence & { color?: string })[];
-  evidencePositions: Record<string, { x: number; y: number }>;
-  rooms: { id: string; name: string; x: number; y: number; w: number; h: number; floor: string; size?: string }[];
+  evidencePositions: Record<string, { x: number; y: number; floor?: number }>;
+  rooms: { id: string; name: string; x: number; y: number; w: number; h: number; floor: string; size?: string; floorNum?: number }[];
+  stairs?: { x: number; y: number; w: number; h: number; fromFloor: number; toFloor: number }[];
+  multiFloor?: boolean;
+  creativeAssets?: CreativeAssets;
   correctSuspect: string;
   keyEvidence: string[];
   motiveKeywords: string[];
@@ -20,21 +24,9 @@ export interface GeneratedMystery {
 }
 
 // Step 1: Generate the mystery skeleton
-export const SKELETON_PROMPT = `You are a MYSTERY ARCHITECT designing a murder mystery game.
+export const SKELETON_PROMPT_BASE = `You are a MYSTERY ARCHITECT designing a murder mystery game.
 
-Create an ORIGINAL mystery with a UNIQUE setting. You MUST pick a setting from a DIFFERENT category each time.
-
-SETTING CATEGORIES (pick ONE you haven't used):
-- **Performance**: opera house, jazz club, comedy show, puppet theater, ballet academy, film set, concert tour bus
-- **Science**: research station (Arctic/Antarctic), observatory, particle accelerator lab, botanical garden greenhouse, marine biology lab, volcano monitoring station
-- **Transport**: orient express train, zeppelin airship, cargo freighter, space shuttle, canal barge, hot air balloon festival
-- **Food/Drink**: vineyard/winery, Michelin restaurant kitchen, chocolate factory, whiskey distillery, food truck festival, tea plantation
-- **History**: medieval castle restoration, Egyptian tomb excavation, Roman bathhouse museum, WWII bunker, Viking longship replica, Mayan temple
-- **Sport/Competition**: chess tournament, fencing academy, horse racing stable, yacht regatta, poker tournament, ice skating championship
-- **Nature**: national park ranger station, deep cave system, lighthouse island, tree canopy research platform, coral reef diving base, safari lodge
-- **Art/Culture**: sculpture gallery, fashion show backstage, antique auction house, tattoo convention, photography darkroom studio, rare book library
-- **Industry**: abandoned factory, mining operation, power plant, newspaper printing press, clock tower, radio station
-- **Unusual**: escape room business, haunted house attraction, wax museum, planetarium, aquarium after-hours, botanical maze, snow globe factory, perfume laboratory
+Invent a COMPLETELY ORIGINAL setting of your own choosing. You have full creative freedom — pick any real-world location, profession, subculture, historical era, industry, or niche hobby that would make a compelling and unusual backdrop for a murder. Think specifically and vividly: not just "a restaurant" but "a Michelin-starred kitchen mid-service"; not just "a lab" but "a cryonics revival facility at 3am"; not just "a ship" but "a solo-circumnavigation yacht run aground".
 
 DO NOT pick: mansion, manor, hotel, cruise ship, archaeological dig, circus, submarine, underwater base, desert camp. These are BANNED.
 
@@ -56,6 +48,9 @@ Output a JSON object with this EXACT structure (no other text):
   },
   "rooms": [
     { "id": "snake_case", "name": "Display Name", "floor": "tile_floor|tile_carpet|tile_metal|tile_wood_deck|tile_carpet_blue|tile_carpet_red|tile_tile_white|tile_sand|tile_ice|tile_grass|tile_stone", "size": "small|medium|large" }
+  ],
+  "upperRooms": [
+    { "name": "Display Name for Upper Floor version of each room", "floor": "tile_floor|tile_carpet|tile_metal|tile_wood_deck|tile_carpet_blue|tile_carpet_red|tile_tile_white|tile_sand|tile_ice|tile_grass|tile_stone" }
   ],
   "characters": [
     {
@@ -81,16 +76,29 @@ Output a JSON object with this EXACT structure (no other text):
 }
 
 RULES:
-- Exactly 6 suspects, one of whom is the killer (isKiller: true)
-- Exactly 8 evidence items, with at least 3 directly linking to the killer
+- 6 to 12 suspects (one is the killer with isKiller: true). MORE suspects make for richer mysteries — aim for 8-10 when the setting supports it. Each suspect needs their OWN distinct motive, secret, alibi, and personality.
+- Exactly 8 evidence items, with at least 3 directly linking to the killer. EVERY evidence item MUST be in the "evidence" array — this is critical.
 - 5 to 8 rooms — pick a number that fits the setting naturally
 - Room sizes should VARY: mix small (storage, closet), medium (office), and large (hall, arena)
 - Include red herrings pointing to innocent suspects
 - Every suspect needs a believable motive, secret, and alibi
-- Make the setting VIVID and unusual
+- Make the setting VIVID and unusual — the more specific and unexpected the better
 - Choose spriteColors for each character that match their role/personality (e.g. chef = white, military = olive, wealthy = deep red)
 - The visual palette should strongly reflect the setting (cold blues for ice station, warm golds for desert, sterile whites for lab, etc.)
-- roomLayout should match the setting (corridor for submarine/train, hub_spoke for space station, irregular for cave/ruins)`;
+- roomLayout should match the setting (corridor for submarine/train, hub_spoke for space station, irregular for cave/ruins)
+- upperRooms must have EXACTLY the same number of entries as rooms. Each entry is the upper-floor version of the corresponding ground-floor room — give it a thematic name fitting the setting (e.g. a winery's "Tasting Room" might become "Private Cellar", a lab's "Reception" might become "Data Vault"). Choose a floor texture that matches (warmer carpets upstairs, same stone if underground, etc.)`;
+
+/** Build the skeleton prompt, letting the AI freely invent its own setting/scenario. */
+export function buildSkeletonPrompt(previousSettings: string[]): string {
+  let prompt = SKELETON_PROMPT_BASE;
+
+  // Exclude previously used settings so the AI doesn't repeat itself
+  if (previousSettings.length > 0) {
+    prompt += `\n\nALREADY USED (do NOT repeat these titles or settings — invent something completely different):\n- ${previousSettings.join('\n- ')}`;
+  }
+
+  return prompt;
+}
 
 // Step 2: Generate a single character's full system prompt
 export function buildCharacterPrompt(skeleton: any, character: any, allCharacters: any[], allEvidence: any[]): string {

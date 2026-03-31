@@ -10,6 +10,17 @@ const PAUSE_TIME_MAX = 3000;
 const ARRIVAL_DIST = 4; // pixels – close enough to target
 const ROOM_MARGIN = 1.5; // tiles inward from room edge for walkable area
 
+// Sentiment-based movement modifiers
+const MOOD_SPEED_MULT = {
+  neutral: 1.0, friendly: 0.9, angry: 0.7, nervous: 1.5,
+};
+const MOOD_IDLE_MULT = {
+  neutral: 1.0, friendly: 1.2, angry: 1.5, nervous: 0.5,
+};
+const MOOD_PAUSE_MULT = {
+  neutral: 1.0, friendly: 1.2, angry: 1.8, nervous: 0.4,
+};
+
 function rand(min, max) {
   return min + Math.random() * (max - min);
 }
@@ -93,9 +104,15 @@ export function updateNPCMovement(scene, delta) {
           if (room) {
             st.target = randomPointInRoom(room, scene._npcTileSize);
             st.state = 'walking';
+            // Apply mood-based speed
+            const moodVariant = window._npcMoodVariants?.[id] || 'neutral';
+            const speedMult = MOOD_SPEED_MULT[moodVariant] || 1.0;
+            st.speed = rand(PACE_SPEED_MIN, PACE_SPEED_MAX) * speedMult;
           } else {
             // No room found – stay idle
-            st.timer = rand(IDLE_TIME_MIN, IDLE_TIME_MAX);
+            const moodVariant = window._npcMoodVariants?.[id] || 'neutral';
+            const idleMult = MOOD_IDLE_MULT[moodVariant] || 1.0;
+            st.timer = rand(IDLE_TIME_MIN, IDLE_TIME_MAX) * idleMult;
           }
         }
         break;
@@ -108,7 +125,9 @@ export function updateNPCMovement(scene, delta) {
         if (dist < ARRIVAL_DIST) {
           sprite.setVelocity(0, 0);
           st.state = 'pausing';
-          st.timer = rand(PAUSE_TIME_MIN, PAUSE_TIME_MAX);
+          const moodVariant = window._npcMoodVariants?.[id] || 'neutral';
+          const pauseMult = MOOD_PAUSE_MULT[moodVariant] || 1.0;
+          st.timer = rand(PAUSE_TIME_MIN, PAUSE_TIME_MAX) * pauseMult;
         } else {
           // Clamp NPC within room bounds — abort if drifted outside
           const room = scene.rooms[st.roomId];
@@ -140,8 +159,11 @@ export function updateNPCMovement(scene, delta) {
         st.timer -= delta;
         if (st.timer <= 0) {
           st.state = 'idle';
-          st.timer = rand(IDLE_TIME_MIN, IDLE_TIME_MAX);
-          st.speed = rand(PACE_SPEED_MIN, PACE_SPEED_MAX);
+          const moodVariant = window._npcMoodVariants?.[id] || 'neutral';
+          const idleMult = MOOD_IDLE_MULT[moodVariant] || 1.0;
+          st.timer = rand(IDLE_TIME_MIN, IDLE_TIME_MAX) * idleMult;
+          const speedMult = MOOD_SPEED_MULT[moodVariant] || 1.0;
+          st.speed = rand(PACE_SPEED_MIN, PACE_SPEED_MAX) * speedMult;
         }
         break;
     }
@@ -150,11 +172,14 @@ export function updateNPCMovement(scene, delta) {
   }
 }
 
-/** Keep the name label centred above the sprite. */
+/** Keep the name label centred above the sprite (iso-aware). */
 function _syncLabel(scene, id, sprite) {
+  // If the scene has iso sprites, the ManorScene._syncIsoPositions() handles label sync
+  // For non-iso scenes, fall back to direct positioning
+  if (scene._npcIsoSprites) return;
   const label = scene.npcLabels[id];
   if (label) {
     label.x = sprite.x;
-    label.y = sprite.y - 20;
+    label.y = sprite.y - 28;
   }
 }

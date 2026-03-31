@@ -44,7 +44,238 @@
     </div>
   </div>
 
-  <!-- ══════════════ DIALOG OVERLAY ══════════════ -->
+  <!-- ══════════════ GENERATION OVERLAY ══════════════ -->
+  <div id="generation-overlay" class="hidden">
+    <div id="generation-panel">
+      <h2 id="gen-panel-title">🕵️ Agents at Work</h2>
+      <p id="gen-panel-subtitle" style="opacity:0.55;font-size:0.85rem;margin-bottom:20px">Your AI agents are designing a unique mystery...</p>
+
+      <!-- View toggle -->
+      <div id="gen-view-toggle" style="text-align:right;margin-bottom:12px">
+        <button id="gen-view-list-btn" class="gen-view-btn active" title="List view">📋</button>
+        <button id="gen-view-graph-btn" class="gen-view-btn" title="Network view">🔗</button>
+        <button id="gen-view-arch-btn" class="gen-view-btn" title="Architecture view">🏗️</button>
+      </div>
+
+      <!-- Pipeline steps (list view) -->
+      <div id="gen-pipeline">
+        <div class="gen-step" id="gen-step-architect">
+          <div class="gen-step-icon">🏛️</div>
+          <div class="gen-step-body">
+            <div class="gen-step-label">Mystery Architect</div>
+            <div class="gen-step-desc">Inventing the crime, setting &amp; suspects</div>
+          </div>
+          <div class="gen-step-state">waiting</div>
+        </div>
+        <div class="gen-step" id="gen-step-characters">
+          <div class="gen-step-icon">📝</div>
+          <div class="gen-step-body">
+            <div class="gen-step-label">Character Writer</div>
+            <div class="gen-step-desc">Writing each suspect's psychology &amp; secrets</div>
+          </div>
+          <div class="gen-step-state">waiting</div>
+        </div>
+        <div class="gen-step" id="gen-step-director">
+          <div class="gen-step-icon">🎬</div>
+          <div class="gen-step-body">
+            <div class="gen-step-label">Director AI</div>
+            <div class="gen-step-desc">Scripting night events &amp; NPC interactions</div>
+          </div>
+          <div class="gen-step-state">waiting</div>
+        </div>
+        <div class="gen-step" id="gen-step-creative">
+          <div class="gen-step-icon">🎨</div>
+          <div class="gen-step-body">
+            <div class="gen-step-label">Creative Agency</div>
+            <div class="gen-step-desc">Designing visual atmosphere &amp; props</div>
+          </div>
+          <div class="gen-step-state">waiting</div>
+        </div>
+        <div class="gen-substeps" id="gen-creative-subs">
+          <div class="gen-step gen-substep" id="gen-step-creative-env">
+            <div class="gen-step-icon">🌆</div>
+            <div class="gen-step-body">
+              <div class="gen-step-label">Environment</div>
+              <div class="gen-step-desc">Walls, particles, ambiance, weather</div>
+            </div>
+            <div class="gen-step-state">waiting</div>
+          </div>
+          <div class="gen-step gen-substep" id="gen-step-creative-props">
+            <div class="gen-step-icon">🪑</div>
+            <div class="gen-step-body">
+              <div class="gen-step-label">Props Department</div>
+              <div class="gen-step-desc">Decorations, furniture, ambient details</div>
+            </div>
+            <div class="gen-step-state">waiting</div>
+          </div>
+          <div class="gen-step gen-substep" id="gen-step-creative-chars">
+            <div class="gen-step-icon">👤</div>
+            <div class="gen-step-body">
+              <div class="gen-step-label">Character Art</div>
+              <div class="gen-step-desc">Evidence sprites, costumes, portraits</div>
+            </div>
+            <div class="gen-step-state">waiting</div>
+          </div>
+        </div>
+        <div class="gen-step" id="gen-step-world">
+          <div class="gen-step-icon">🗺️</div>
+          <div class="gen-step-body">
+            <div class="gen-step-label">World Builder</div>
+            <div class="gen-step-desc">Assembling rooms, evidence &amp; positions</div>
+          </div>
+          <div class="gen-step-state">waiting</div>
+        </div>
+        <div class="gen-step" id="gen-step-dp">
+          <div class="gen-step-icon">🎬</div>
+          <div class="gen-step-body">
+            <div class="gen-step-label">Dir. of Photography</div>
+            <div class="gen-step-desc">Visual QA — reviewing rendered textures</div>
+          </div>
+          <div class="gen-step-state">waiting</div>
+        </div>
+      </div>
+
+      <!-- Network graph view (hidden by default) -->
+      <div id="gen-network" class="gen-network hidden">
+        <svg id="gen-net-svg" class="gen-net-svg" viewBox="0 0 600 400" preserveAspectRatio="xMidYMid meet">
+          <!-- Connection lines -->
+          <line class="gen-net-line" id="net-line-arch-char" x1="120" y1="80" x2="300" y2="80"/>
+          <line class="gen-net-line" id="net-line-char-dir" x1="300" y1="80" x2="480" y2="80"/>
+          <line class="gen-net-line" id="net-line-dir-creative" x1="480" y1="80" x2="300" y2="220"/>
+          <line class="gen-net-line" id="net-line-creative-world" x1="300" y1="220" x2="200" y2="360"/>
+          <line class="gen-net-line" id="net-line-world-dp" x1="200" y1="360" x2="400" y2="360"/>
+          <!-- Creative sub-lines -->
+          <line class="gen-net-line gen-net-sub-line" id="net-line-cr-env" x1="300" y1="220" x2="140" y2="300"/>
+          <line class="gen-net-line gen-net-sub-line" id="net-line-cr-props" x1="300" y1="220" x2="300" y2="300"/>
+          <line class="gen-net-line gen-net-sub-line" id="net-line-cr-chars" x1="300" y1="220" x2="460" y2="300"/>
+        </svg>
+        <!-- Agent nodes -->
+        <div class="gen-net-node" id="net-node-architect" style="left:120px;top:80px">
+          <div class="gen-net-icon">🏛️</div>
+          <div class="gen-net-label">Architect</div>
+          <div class="gen-net-status"></div>
+        </div>
+        <div class="gen-net-node" id="net-node-characters" style="left:300px;top:80px">
+          <div class="gen-net-icon">📝</div>
+          <div class="gen-net-label">Characters</div>
+          <div class="gen-net-status"></div>
+        </div>
+        <div class="gen-net-node" id="net-node-director" style="left:480px;top:80px">
+          <div class="gen-net-icon">🎬</div>
+          <div class="gen-net-label">Director</div>
+          <div class="gen-net-status"></div>
+        </div>
+        <div class="gen-net-node" id="net-node-creative" style="left:300px;top:220px">
+          <div class="gen-net-icon">🎨</div>
+          <div class="gen-net-label">Creative</div>
+          <div class="gen-net-status"></div>
+        </div>
+        <div class="gen-net-node gen-net-sub" id="net-node-creative-env" style="left:140px;top:300px">
+          <div class="gen-net-icon">🌆</div>
+          <div class="gen-net-label">Env</div>
+        </div>
+        <div class="gen-net-node gen-net-sub" id="net-node-creative-props" style="left:300px;top:300px">
+          <div class="gen-net-icon">🪑</div>
+          <div class="gen-net-label">Props</div>
+        </div>
+        <div class="gen-net-node gen-net-sub" id="net-node-creative-chars" style="left:460px;top:300px">
+          <div class="gen-net-icon">👤</div>
+          <div class="gen-net-label">Chars</div>
+        </div>
+        <div class="gen-net-node" id="net-node-world" style="left:200px;top:360px">
+          <div class="gen-net-icon">🗺️</div>
+          <div class="gen-net-label">World</div>
+          <div class="gen-net-status"></div>
+        </div>
+        <div class="gen-net-node" id="net-node-dp" style="left:400px;top:360px">
+          <div class="gen-net-icon">🎬</div>
+          <div class="gen-net-label">DP</div>
+          <div class="gen-net-status"></div>
+        </div>
+        <!-- Data flow labels (hidden by default, shown on events) -->
+        <div id="gen-net-data-items" class="gen-net-data-items"></div>
+      </div>
+
+      <!-- Architecture view — runtime game agent diagram -->
+      <div id="gen-arch" class="gen-arch hidden">
+        <!-- SVG lines drawn dynamically by JS -->
+        <svg id="gen-arch-svg" class="gen-arch-svg" viewBox="0 0 700 580" preserveAspectRatio="xMidYMid meet"></svg>
+
+        <!-- Static system agents (always shown) -->
+        <div class="arch-node arch-player" id="arch-node-player" style="left:60px;top:60px">
+          <div class="arch-icon">🕵️</div>
+          <div class="arch-label">Player</div>
+        </div>
+
+        <div class="arch-node" id="arch-node-director" style="left:640px;top:60px">
+          <div class="arch-icon">🎬</div>
+          <div class="arch-label">Director</div>
+        </div>
+
+        <div class="arch-node" id="arch-node-profiler" style="left:60px;top:280px">
+          <div class="arch-icon">🧠</div>
+          <div class="arch-label">Profiler</div>
+        </div>
+
+        <div class="arch-node arch-state" id="arch-node-state" style="left:350px;top:280px">
+          <div class="arch-icon">💾</div>
+          <div class="arch-label">GameState</div>
+          <div class="arch-detail">Evidence · Sentiments · Day/Night</div>
+        </div>
+
+        <div class="arch-node" id="arch-node-narrator" style="left:170px;top:440px">
+          <div class="arch-icon">📖</div>
+          <div class="arch-label">Narrator</div>
+        </div>
+
+        <div class="arch-node" id="arch-node-forensics" style="left:350px;top:440px">
+          <div class="arch-icon">🔬</div>
+          <div class="arch-label">Forensics</div>
+        </div>
+
+        <div class="arch-node" id="arch-node-skeleton" style="left:530px;top:440px">
+          <div class="arch-icon">🔑</div>
+          <div class="arch-label">Skeleton Key</div>
+        </div>
+
+        <div class="arch-node" id="arch-node-creative" style="left:610px;top:440px">
+          <div class="arch-icon">🎨</div>
+          <div class="arch-label">Creative Agency</div>
+        </div>
+
+        <div class="arch-node" id="arch-node-dp" style="left:610px;top:520px">
+          <div class="arch-icon">🎬</div>
+          <div class="arch-label">Dir. of Photography</div>
+        </div>
+
+        <!-- NPC agent nodes (populated dynamically as characters are generated) -->
+        <div id="arch-npc-row" class="arch-npc-row"></div>
+
+        <!-- Legend -->
+        <div class="arch-legend">
+          <span class="arch-legend-item"><span class="arch-legend-line arch-legend-solid"></span> Interrogation (SSE)</span>
+          <span class="arch-legend-item"><span class="arch-legend-line arch-legend-dashed"></span> Async agent</span>
+          <span class="arch-legend-item"><span class="arch-legend-line arch-legend-hook"></span> onPostToolUse hook</span>
+          <span class="arch-legend-item"><span class="arch-legend-line arch-legend-gen"></span> Night / generation</span>
+        </div>
+      </div>
+
+      <!-- Live reasoning log -->
+      <div id="gen-log-container">
+        <div id="gen-log-header">💭 Agent Reasoning</div>
+        <div id="gen-log"></div>
+      </div>
+
+      <!-- Error/retry UI (hidden by default) -->
+      <div id="gen-error-bar" class="hidden" style="margin-top:16px;text-align:center">
+        <p id="gen-error-msg" style="color:#ff6b6b;font-size:0.9rem;margin-bottom:10px"></p>
+        <button id="gen-retry-btn" style="padding:8px 24px;background:var(--gold,#c9a84c);color:#0a0a0a;border:none;border-radius:4px;font-family:inherit;font-size:0.9rem;cursor:pointer">🔄 Retry</button>
+        <button id="gen-back-btn" style="padding:8px 24px;margin-left:8px;background:transparent;color:var(--gold,#c9a84c);border:1px solid var(--gold,#c9a84c);border-radius:4px;font-family:inherit;font-size:0.9rem;cursor:pointer">← Back</button>
+      </div>
+    </div>
+  </div>
+
+
   <div id="dialog-overlay" class="panel hidden">
     <div class="dialog-inner">
       <div class="dialog-header">
@@ -118,6 +349,14 @@
       </div>
 
       <div id="accusation-result" class="accusation-result hidden"></div>
+
+      <!-- Crime Replay (shown after correct accusation) -->
+      <div id="accusation-replay" class="accusation-replay hidden">
+        <h3 id="replay-chapter-title" class="replay-chapter-title"></h3>
+        <p id="replay-chapter-text" class="replay-chapter-text"></p>
+        <div id="replay-progress" class="replay-progress"></div>
+        <button id="replay-next" class="gold-btn replay-next-btn hidden">Next</button>
+      </div>
     </div>
   </div>
 
@@ -152,7 +391,12 @@
       <span id="hud-clock-sep">·</span>
       <span id="hud-clock-time">8:00 PM</span>
       <div id="hud-clock-bar"><div id="hud-clock-fill"></div></div>
+      <div id="end-day-popup" class="end-day-popup hidden">
+        <span class="end-day-label">🌙 Skip to nightfall?</span>
+        <button id="end-day-btn" class="gold-btn end-day-btn">End Day</button>
+      </div>
     </div>
+    <div id="hud-floor-indicator" class="hud-floor" title="Ground Floor">🏠 Ground Floor</div>
     <div id="hud-profile" class="hud-profile" title="Your detective style">
       <span id="hud-profile-icon">🕵️</span>
       <span id="hud-profile-style">Unknown</span>

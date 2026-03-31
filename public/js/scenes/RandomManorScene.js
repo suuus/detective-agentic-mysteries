@@ -5,6 +5,8 @@ import { initNPCMovement, updateNPCMovement } from '../npcMovement.js';
 import { updateTimedEvent, checkTimedEventTrigger, cancelTimedEvent, completeTimedEvent, restoreFledNPCs } from '../timedEvents.js';
 import { updateChase, maybeChaseOnWrongAccusation } from '../chase.js';
 import { initNPCApproach, updateNPCApproach, isNPCApproaching } from '../npcApproach.js';
+import { initEmotionVisuals, syncEmotionPositions, cleanupEmotionVisuals } from '../npcEmotions.js';
+import { ISO_TILE_W, ISO_TILE_H, tileToScreen, screenToTile, isoMapBounds, isoDepth } from '../isoUtils.js';
 
 /**
  * RandomManorScene — dynamically built 2D manor from generated mystery data.
@@ -37,106 +39,42 @@ export default class RandomManorScene extends Phaser.Scene {
       return;
     }
 
+    // Multi-floor support — only active when server sends multiFloor: true
+    this.multiFloor = !!world.multiFloor;
+    if (this.multiFloor) {
+      this.currentFloor = 0;
+      this._floorTransitioning = false;
+      this._stairCooldown = false;
+      this._floorObjects = { 0: [], 1: [] };
+      this._floorWalls = { 0: [], 1: [] };
+      this._floorFurniture = { 0: [], 1: [] };
+      this._npcFloors = {};
+      this.stairs = world.stairs || [];
+    }
+
     // Build rooms from generated data
     this.rooms = {};
     for (const r of world.rooms) {
-      this.rooms[r.id] = { name: r.name, x: r.x, y: r.y, w: r.w, h: r.h, floor: r.floor };
+      const entry = { name: r.name, x: r.x, y: r.y, w: r.w, h: r.h, floor: r.floor };
+      if (this.multiFloor) entry.floorNum = r.floorNum ?? 0;
+      this.rooms[r.id] = entry;
     }
 
     // Auto-generate doors between nearby rooms
     const rooms = world.rooms;
-    this.doors = [];
-    for (let i = 0; i < rooms.length; i++) {
-      for (let j = i + 1; j < rooms.length; j++) {
-        const a = rooms[i], b = rooms[j];
-        const aRight = a.x + a.w, aBottom = a.y + a.h;
-        const bRight = b.x + b.w, bBottom = b.y + b.h;
-
-        // Check horizontal adjacency: a is left of b (or close)
-        const hGap = b.x - aRight;
-        if (hGap >= 0 && hGap <= 3) {
-          // Find vertical overlap
-          const overlapTop = Math.max(a.y, b.y);
-          const overlapBot = Math.min(aBottom, bBottom);
-          if (overlapBot - overlapTop >= 2) {
-            const doorY = overlapTop + Math.floor((overlapBot - overlapTop) / 2) - 1;
-            this.doors.push({ x: aRight - 1, y: doorY, w: hGap + 2, h: 2 });
-          }
-        }
-        // b is left of a
-        const hGap2 = a.x - bRight;
-        if (hGap2 >= 0 && hGap2 <= 3) {
-          const overlapTop = Math.max(a.y, b.y);
-          const overlapBot = Math.min(aBottom, bBottom);
-          if (overlapBot - overlapTop >= 2) {
-            const doorY = overlapTop + Math.floor((overlapBot - overlapTop) / 2) - 1;
-            this.doors.push({ x: bRight - 1, y: doorY, w: hGap2 + 2, h: 2 });
-          }
-        }
-        // Check vertical adjacency: a is above b (or close)
-        const vGap = b.y - aBottom;
-        if (vGap >= 0 && vGap <= 3) {
-          const overlapLeft = Math.max(a.x, b.x);
-          const overlapRight = Math.min(aRight, bRight);
-          if (overlapRight - overlapLeft >= 2) {
-            const doorX = overlapLeft + Math.floor((overlapRight - overlapLeft) / 2) - 1;
-            this.doors.push({ x: doorX, y: aBottom - 1, w: 2, h: vGap + 2 });
-          }
-        }
-        // b is above a
-        const vGap2 = a.y - bBottom;
-        if (vGap2 >= 0 && vGap2 <= 3) {
-          const overlapLeft = Math.max(a.x, b.x);
-          const overlapRight = Math.min(aRight, bRight);
-          if (overlapRight - overlapLeft >= 2) {
-            const doorX = overlapLeft + Math.floor((overlapRight - overlapLeft) / 2) - 1;
-            this.doors.push({ x: doorX, y: bBottom - 1, w: 2, h: vGap2 + 2 });
-          }
-        }
-      }
-    }
-    console.log(`[RandomManor] Generated ${this.doors.length} doors for ${rooms.length} rooms`);
-
-    // Fallback: ensure every room is reachable — if a room has no door, force one to nearest room
-    const roomsWithDoors = new Set();
-    for (const d of this.doors) {
-      for (const r of rooms) {
-        const rRight = r.x + r.w, rBottom = r.y + r.h;
-        // Check if door touches this room's perimeter
-        if (d.x + d.w >= r.x && d.x <= rRight && d.y + d.h >= r.y && d.y <= rBottom) {
-          roomsWithDoors.add(r.id);
-        }
-      }
-    }
-    for (const r of rooms) {
-      if (roomsWithDoors.has(r.id)) continue;
-      // Find nearest other room and force a door
-      let best = null, bestDist = Infinity;
-      for (const other of rooms) {
-        if (other.id === r.id) continue;
-        const cx1 = r.x + r.w / 2, cy1 = r.y + r.h / 2;
-        const cx2 = other.x + other.w / 2, cy2 = other.y + other.h / 2;
-        const dist = Math.abs(cx1 - cx2) + Math.abs(cy1 - cy2);
-        if (dist < bestDist) { bestDist = dist; best = other; }
-      }
-      if (best) {
-        // Create a corridor door between them
-        const midX = Math.floor((r.x + r.w / 2 + best.x + best.w / 2) / 2);
-        const midY = Math.floor((r.y + r.h / 2 + best.y + best.h / 2) / 2);
-        // Horizontal or vertical based on relative position
-        if (Math.abs(r.x - best.x) > Math.abs(r.y - best.y)) {
-          const doorY = Math.max(r.y, best.y) + 1;
-          const startX = Math.min(r.x + r.w, best.x + best.w) - 1;
-          const endX = Math.max(r.x, best.x) + 1;
-          this.doors.push({ x: Math.min(startX, endX), y: doorY, w: Math.abs(endX - startX) + 1, h: 2 });
-        } else {
-          const doorX = Math.max(r.x, best.x) + 1;
-          const startY = Math.min(r.y + r.h, best.y + best.h) - 1;
-          const endY = Math.max(r.y, best.y) + 1;
-          this.doors.push({ x: doorX, y: Math.min(startY, endY), w: 2, h: Math.abs(endY - startY) + 1 });
-        }
-        console.log(`[RandomManor] Forced door for isolated room "${r.id}" → "${best.id}"`);
-      }
+    if (this.multiFloor) {
+      // Per-floor door generation for multi-floor layouts
+      const floor0Rooms = rooms.filter(r => (r.floorNum ?? 0) === 0);
+      const floor1Rooms = rooms.filter(r => (r.floorNum ?? 0) === 1);
+      this.doors = {
+        0: this._autoGenerateDoors(floor0Rooms),
+        1: this._autoGenerateDoors(floor1Rooms),
+      };
+      const totalDoors = this.doors[0].length + this.doors[1].length;
+      console.log(`[RandomManor] Multi-floor: ${totalDoors} doors (F0: ${this.doors[0].length}, F1: ${this.doors[1].length}) for ${rooms.length} rooms`);
+    } else {
+      this.doors = this._autoGenerateDoors(rooms);
+      console.log(`[RandomManor] Generated ${this.doors.length} doors for ${rooms.length} rooms`);
     }
 
     // Compute dynamic map size from room positions
@@ -148,24 +86,67 @@ export default class RandomManorScene extends Phaser.Scene {
     this.MAP_W = Math.max(maxX + 1, 20);
     this.MAP_H = Math.max(maxY + 1, 15);
 
-    this._buildFloors(T);
-    this._buildWalls(T);
+    // Isometric rendering setup
+    const bounds = isoMapBounds(this.MAP_W, this.MAP_H);
+    this._isoOffsetX = bounds.offsetX;
+    this._isoOffsetY = bounds.offsetY;
+    this._isoMapW = bounds.width;
+    this._isoMapH = bounds.height;
+    this._npcIsoSprites = {};
+    this._npcLabelBgs = {};
+
+    // Proximity speech bubble state
+    this._proxBubbles = {};
+    this._proxCooldowns = {};
+
+    if (this.multiFloor) {
+      this._buildFloorLevel(0, T);
+      this._buildFloorLevel(1, T);
+      this._placeStairs(T);
+    } else {
+      this._buildFloors(T);
+      this._buildWalls(T);
+    }
     this._placeCrimeScene(T, world);
     this._placeFurniture(T);
     this._placeNPCs(T, world);
     initNPCMovement(this);
     this._placeEvidence(T, world);
+    this._placeCreativeAssets(T, world);
     this._setupPlayer(T);
     this._setupCamera(T);
     this._setupInput();
     initNPCApproach(this);
+    initEmotionVisuals(this, this.npcs, this.npcLabels);
     this._createAmbientParticles();
 
     // Weather effects — use generated world data or randomize by theme
     createWeatherTextures(this);
     const _weatherType = world.visual?.weather
       || ['rain', 'fog', 'storm', 'snow', 'clear'][Math.floor(Math.random() * 5)];
-    createWeather(this, _weatherType, this.MAP_W, this.MAP_H, T);
+
+    // If creative agent designed custom weather, use its particle and config
+    const caWeather = world.creativeAssets?.weather;
+    if (caWeather?.config && this.textures.exists('weather_creative')) {
+      const wc = caWeather.config;
+      const worldW = this.MAP_W * T;
+      const worldH = this.MAP_H * T;
+      this.add.particles(0, 0, 'weather_creative', {
+        x: { min: -100, max: worldW + 100 },
+        y: wc.speedY?.min > 0 ? -20 : { min: 0, max: worldH },
+        lifespan: wc.lifespan || 3000,
+        speedY: wc.speedY || { min: 100, max: 200 },
+        speedX: wc.speedX || { min: -10, max: 10 },
+        alpha: wc.alpha || { start: 0.5, end: 0.1 },
+        scale: wc.scale || { start: 1, end: 0.6 },
+        frequency: wc.frequency || 40,
+        quantity: 1,
+        blendMode: wc.blendMode || 'ADD',
+        rotate: wc.rotate || { min: 0, max: 0 },
+      }).setDepth(90);
+    } else {
+      createWeather(this, _weatherType, this.MAP_W, this.MAP_H, T);
+    }
 
     // Room label HUD
     this.roomLabel = this.add.text(16, 16, '', {
@@ -181,6 +162,11 @@ export default class RandomManorScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(20).setVisible(false);
     this._wasBlocked = false;
 
+    // Show initial floor for multi-floor mode
+    if (this.multiFloor) {
+      this._showFloor(0);
+    }
+
     // Intro overlay
     this.time.delayedCall(300, () => this._showIntro(world));
 
@@ -191,10 +177,10 @@ export default class RandomManorScene extends Phaser.Scene {
     this.isNight = false;
     this.transitioning = false;
 
-    // Night overlay
+    // Night overlay — sized for iso map
     this.nightOverlay = this.add.rectangle(
-      this.MAP_W * T / 2, this.MAP_H * T / 2,
-      this.MAP_W * T, this.MAP_H * T,
+      this._isoMapW / 2, this._isoMapH / 2,
+      this._isoMapW, this._isoMapH,
       0x0a0a2a, 0
     ).setDepth(50).setAlpha(0);
 
@@ -321,17 +307,50 @@ export default class RandomManorScene extends Phaser.Scene {
       subtitleEl.textContent = 'The suspects are talking in the shadows' + '.'.repeat(dots);
     }, 500);
 
+    // Conversations stream in one-by-one as they complete on the server
+    const pendingConversations = [];
+    let resolveNextConvo = null;
+
+    console.log('[Night] Calling advanceDay API (SSE)...');
     let nightResult;
     try {
-      nightResult = await window.gameAPI.advanceDay();
-    } catch(err) { console.error('Night advance failed:', err); }
+      nightResult = await window.gameAPI.advanceDay((convo) => {
+        console.log(`[Night] Streamed conversation: ${convo.participantNames?.join(' & ')}`);
+        pendingConversations.push(convo);
+        if (resolveNextConvo) { resolveNextConvo(); resolveNextConvo = null; }
+      });
+      console.log('[Night] advanceDay stream complete, conversations:', nightResult?.conversations?.length ?? 0);
+    } catch(err) {
+      console.error('[Night] advanceDay FAILED:', err);
+    }
+    if (resolveNextConvo) { resolveNextConvo(); resolveNextConvo = null; }
 
     clearInterval(dotInterval);
 
-    const conversations = nightResult?.conversations ?? [];
+    // Use streamed conversations (fall back to final result if streaming missed some)
+    const conversations = pendingConversations.length > 0
+      ? pendingConversations
+      : (nightResult?.conversations ?? []);
 
+    if (conversations.length === 0) {
+      console.warn('[Night] No conversations received from server');
+      subtitleEl.textContent = 'The night passes quietly...';
+      convoEl.innerHTML = '';
+      const fallbackP = document.createElement('p');
+      fallbackP.style.cssText = 'color:#e8dcc8;font-style:italic;text-align:center;margin:24px 0;opacity:0.7';
+      fallbackP.textContent = 'The suspects retreat to their rooms, speaking only in whispers you cannot hear.';
+      convoEl.appendChild(fallbackP);
+      promptEl.textContent = 'Click or press any key to continue...';
+      await new Promise(resolve => {
+        const done = () => { document.removeEventListener('keydown', done); promptEl.removeEventListener('click', done); resolve(); };
+        setTimeout(() => { document.addEventListener('keydown', done, { once: true }); promptEl.addEventListener('click', done, { once: true }); }, 400);
+      });
+    }
+
+    // Display each conversation with click-to-advance
     for (let ci = 0; ci < conversations.length; ci++) {
       const convo = conversations[ci];
+      console.log(`[Night] Showing conversation ${ci+1}/${conversations.length}: ${convo.participantNames?.join(' & ')}`);
 
       titleEl.textContent = '\u{1F319} ' + convo.participantNames.join(' & ');
       subtitleEl.textContent = convo.location;
@@ -341,9 +360,14 @@ export default class RandomManorScene extends Phaser.Scene {
         const isA = ex.speaker === convo.participants[0];
         const div = document.createElement('div');
         div.className = 'night-exchange ' + (isA ? 'speaker-a' : 'speaker-b');
-        div.innerHTML =
-          '<div class="speaker-name">' + ex.speakerName + '</div>' +
-          '<div class="speaker-text">\u201C' + ex.text + '\u201D</div>';
+        const nameDiv = document.createElement('div');
+        nameDiv.className = 'speaker-name';
+        nameDiv.textContent = ex.speakerName;
+        const textDiv = document.createElement('div');
+        textDiv.className = 'speaker-text';
+        textDiv.textContent = '\u201C' + ex.text + '\u201D';
+        div.appendChild(nameDiv);
+        div.appendChild(textDiv);
         convoEl.appendChild(div);
       }
 
@@ -411,6 +435,13 @@ export default class RandomManorScene extends Phaser.Scene {
       const sprite = this.npcs[npcPos.id];
       if (!sprite) continue;
 
+      // Update NPC floor when multi-floor is active
+      if (this.multiFloor) {
+        const npcFloor = npcPos.floor ?? 0;
+        this._npcFloors[npcPos.id] = npcFloor;
+        sprite.setData('floor', npcFloor);
+      }
+
       let nx = npcPos.x;
       let ny = npcPos.y;
 
@@ -432,9 +463,12 @@ export default class RandomManorScene extends Phaser.Scene {
 
       const label = this.npcLabels[npcPos.id];
       if (label) {
-        label.setPosition(newX, ny * T - 8);
+        label.setPosition(newX, ny * T - 16);
       }
     }
+
+    // Refresh floor visibility after NPC repositioning
+    if (this.multiFloor) this._showFloor(this.currentFloor);
 
     try {
       const positions = await window.gameAPI.getEvidencePositions();
@@ -451,12 +485,18 @@ export default class RandomManorScene extends Phaser.Scene {
           if (pos) {
             ev.sprite.setPosition(pos.x * T + T/2, pos.y * T + T/2);
             ev.glow.setPosition(pos.x * T + T/2, pos.y * T + T/2);
+            if (this.multiFloor) {
+              const evFloor = pos.floor ?? 0;
+              ev.floor = evFloor;
+              ev.sprite.setData('floor', evFloor);
+            }
           }
         }
       }
 
       for (const pos of positions) {
         if (this.evidenceItems[pos.id]) continue;
+        const evFloor = this.multiFloor ? (pos.floor ?? 0) : 0;
         const glow = this.add.image(pos.x*T+T/2, pos.y*T+T/2, 'ev_glow').setDepth(3).setAlpha(0.6);
         this.tweens.add({
           targets: glow, alpha:{from:0.3,to:0.8}, scale:{from:0.9,to:1.2},
@@ -469,8 +509,12 @@ export default class RandomManorScene extends Phaser.Scene {
           .setDepth(4).setImmovable(true);
         sprite.body.setSize(20, 20);
         sprite.setData('id', pos.id);
-        this.evidenceItems[pos.id] = { sprite, glow, collected: false };
+        if (this.multiFloor) sprite.setData('floor', evFloor);
+        this.evidenceItems[pos.id] = { sprite, glow, collected: false, floor: evFloor };
       }
+
+      // Refresh floor visibility after evidence update
+      if (this.multiFloor) this._showFloor(this.currentFloor);
     } catch (err) {
       console.warn('Failed to update evidence positions:', err);
     }
@@ -481,23 +525,33 @@ export default class RandomManorScene extends Phaser.Scene {
   // ── BUILD ──────────────────────────────────────────────────
 
   _buildFloors(T) {
+    const ox = this._isoOffsetX, oy = this._isoOffsetY;
     for (const room of Object.values(this.rooms)) {
       const floorKey = this.textures.exists(room.floor) ? room.floor : 'tile_floor';
       for (let ry = 0; ry < room.h; ry++)
-        for (let rx = 0; rx < room.w; rx++)
-          this.add.image((room.x+rx)*T+T/2, (room.y+ry)*T+T/2, floorKey).setDepth(0);
+        for (let rx = 0; rx < room.w; rx++) {
+          const { x, y } = tileToScreen(room.x+rx, room.y+ry, ox, oy);
+          this.add.image(x, y, floorKey).setDepth(0);
+        }
 
-      this.add.text((room.x+room.w/2)*T, (room.y+1)*T, room.name, {
-        fontFamily: '"Playfair Display", serif', fontSize: '11px', color: '#c9a84c55'
-      }).setOrigin(0.5).setDepth(1);
+      const rcx = room.x + room.w / 2;
+      const rcy = room.y + 1;
+      const { x: lx, y: ly } = tileToScreen(rcx, rcy, ox, oy);
+      this.add.text(lx, ly, room.name, {
+        fontFamily: '"Playfair Display", serif', fontSize: '11px', color: '#c9a84c',
+        backgroundColor: '#0a0a0acc', padding: { x: 4, y: 2 }
+      }).setOrigin(0.5).setDepth(0.5);
     }
     for (const d of this.doors)
       for (let dy=0; dy<d.h; dy++)
-        for (let dx=0; dx<d.w; dx++)
-          this.add.image((d.x+dx)*T+T/2, (d.y+dy)*T+T/2, 'tile_floor').setDepth(0);
+        for (let dx=0; dx<d.w; dx++) {
+          const { x, y } = tileToScreen(d.x+dx, d.y+dy, ox, oy);
+          this.add.image(x, y, 'tile_floor').setDepth(0);
+        }
   }
 
   _buildWalls(T) {
+    const ox = this._isoOffsetX, oy = this._isoOffsetY;
     const grid = Array.from({length:this.MAP_H}, () => Array(this.MAP_W).fill(true));
     for (const r of Object.values(this.rooms))
       for (let ry=1; ry<r.h-1; ry++)
@@ -516,15 +570,354 @@ export default class RandomManorScene extends Phaser.Scene {
         if (!grid[y][x]) continue;
         const visible = neighbors(x,y).some(([nx,ny]) =>
           nx>=0&&nx<this.MAP_W&&ny>=0&&ny<this.MAP_H&&!grid[ny][nx]);
-        if (visible)
-          this.add.image(x*T+T/2, y*T+T/2, 'tile_wall').setDepth(0);
+        if (visible) {
+          const { x: sx, y: sy } = tileToScreen(x, y, ox, oy);
+          this.add.image(sx, sy, 'tile_wall')
+            .setDepth(isoDepth(x, y) + 0.5)
+            .setOrigin(0.5, 0.67);
+        }
         const b = this.add.rectangle(x*T+T/2, y*T+T/2, T, T).setVisible(false);
         this.physics.add.existing(b, true);
         this.wallGroup.add(b);
       }
   }
 
+  // ── MULTI-FLOOR METHODS ─────────────────────────────────────
+
+  _autoGenerateDoors(rooms) {
+    const doors = [];
+    for (let i = 0; i < rooms.length; i++) {
+      for (let j = i + 1; j < rooms.length; j++) {
+        const a = rooms[i], b = rooms[j];
+        const aRight = a.x + a.w, aBottom = a.y + a.h;
+        const bRight = b.x + b.w, bBottom = b.y + b.h;
+
+        const hGap = b.x - aRight;
+        if (hGap >= 0 && hGap <= 3) {
+          const overlapTop = Math.max(a.y, b.y);
+          const overlapBot = Math.min(aBottom, bBottom);
+          if (overlapBot - overlapTop >= 2) {
+            const doorY = overlapTop + Math.floor((overlapBot - overlapTop) / 2) - 1;
+            doors.push({ x: aRight - 1, y: doorY, w: hGap + 2, h: 2 });
+          }
+        }
+        const hGap2 = a.x - bRight;
+        if (hGap2 >= 0 && hGap2 <= 3) {
+          const overlapTop = Math.max(a.y, b.y);
+          const overlapBot = Math.min(aBottom, bBottom);
+          if (overlapBot - overlapTop >= 2) {
+            const doorY = overlapTop + Math.floor((overlapBot - overlapTop) / 2) - 1;
+            doors.push({ x: bRight - 1, y: doorY, w: hGap2 + 2, h: 2 });
+          }
+        }
+        const vGap = b.y - aBottom;
+        if (vGap >= 0 && vGap <= 3) {
+          const overlapLeft = Math.max(a.x, b.x);
+          const overlapRight = Math.min(aRight, bRight);
+          if (overlapRight - overlapLeft >= 2) {
+            const doorX = overlapLeft + Math.floor((overlapRight - overlapLeft) / 2) - 1;
+            doors.push({ x: doorX, y: aBottom - 1, w: 2, h: vGap + 2 });
+          }
+        }
+        const vGap2 = a.y - bBottom;
+        if (vGap2 >= 0 && vGap2 <= 3) {
+          const overlapLeft = Math.max(a.x, b.x);
+          const overlapRight = Math.min(aRight, bRight);
+          if (overlapRight - overlapLeft >= 2) {
+            const doorX = overlapLeft + Math.floor((overlapRight - overlapLeft) / 2) - 1;
+            doors.push({ x: doorX, y: bBottom - 1, w: 2, h: vGap2 + 2 });
+          }
+        }
+      }
+    }
+
+    // Fallback: ensure every room is reachable
+    const roomsWithDoors = new Set();
+    for (const d of doors) {
+      for (const r of rooms) {
+        const rRight = r.x + r.w, rBottom = r.y + r.h;
+        if (d.x + d.w >= r.x && d.x <= rRight && d.y + d.h >= r.y && d.y <= rBottom) {
+          roomsWithDoors.add(r.id);
+        }
+      }
+    }
+    for (const r of rooms) {
+      if (roomsWithDoors.has(r.id)) continue;
+      let best = null, bestDist = Infinity;
+      for (const other of rooms) {
+        if (other.id === r.id) continue;
+        const cx1 = r.x + r.w / 2, cy1 = r.y + r.h / 2;
+        const cx2 = other.x + other.w / 2, cy2 = other.y + other.h / 2;
+        const dist = Math.abs(cx1 - cx2) + Math.abs(cy1 - cy2);
+        if (dist < bestDist) { bestDist = dist; best = other; }
+      }
+      if (best) {
+        if (Math.abs(r.x - best.x) > Math.abs(r.y - best.y)) {
+          const doorY = Math.max(r.y, best.y) + 1;
+          const startX = Math.min(r.x + r.w, best.x + best.w) - 1;
+          const endX = Math.max(r.x, best.x) + 1;
+          doors.push({ x: Math.min(startX, endX), y: doorY, w: Math.abs(endX - startX) + 1, h: 2 });
+        } else {
+          const doorX = Math.max(r.x, best.x) + 1;
+          const startY = Math.min(r.y + r.h, best.y + best.h) - 1;
+          const endY = Math.max(r.y, best.y) + 1;
+          doors.push({ x: doorX, y: Math.min(startY, endY), w: 2, h: Math.abs(endY - startY) + 1 });
+        }
+        console.log(`[RandomManor] Forced door for isolated room "${r.id}" → "${best.id}"`);
+      }
+    }
+    return doors;
+  }
+
+  _buildFloorLevel(floorNum, T) {
+    const floorRooms = Object.values(this.rooms).filter(r => (r.floorNum ?? 0) === floorNum);
+    const floorDoors = this.doors[floorNum] || [];
+    const ox = this._isoOffsetX, oy = this._isoOffsetY;
+
+    // Build floor tiles — isometric diamond placement
+    for (const room of floorRooms) {
+      const floorKey = this.textures.exists(room.floor) ? room.floor : 'tile_floor';
+      for (let ry = 0; ry < room.h; ry++)
+        for (let rx = 0; rx < room.w; rx++) {
+          const { x, y } = tileToScreen(room.x + rx, room.y + ry, ox, oy);
+          const img = this.add.image(x, y, floorKey).setDepth(0);
+          this._floorObjects[floorNum].push(img);
+        }
+
+      // Room name label
+      const rcx = room.x + room.w / 2;
+      const rcy = room.y + 1;
+      const { x: lx, y: ly } = tileToScreen(rcx, rcy, ox, oy);
+      const label = this.add.text(lx, ly, room.name, {
+        fontFamily: '"Playfair Display", serif', fontSize: '11px', color: '#c9a84c',
+        backgroundColor: '#0a0a0acc', padding: { x: 4, y: 2 }
+      }).setOrigin(0.5).setDepth(0.5);
+      this._floorObjects[floorNum].push(label);
+    }
+
+    // Floor under doorways
+    for (const d of floorDoors)
+      for (let dy=0; dy<d.h; dy++)
+        for (let dx=0; dx<d.w; dx++) {
+          const { x, y } = tileToScreen(d.x + dx, d.y + dy, ox, oy);
+          const img = this.add.image(x, y, 'tile_floor').setDepth(0);
+          this._floorObjects[floorNum].push(img);
+        }
+
+    // Build walls — same grid logic, but iso placement
+    const grid = Array.from({length:this.MAP_H}, () => Array(this.MAP_W).fill(true));
+    for (const r of floorRooms)
+      for (let ry=1; ry<r.h-1; ry++)
+        for (let rx=1; rx<r.w-1; rx++)
+          grid[r.y+ry][r.x+rx] = false;
+    for (const d of floorDoors)
+      for (let dy=0; dy<d.h; dy++)
+        for (let dx=0; dx<d.w; dx++) {
+          const gy=d.y+dy, gx=d.x+dx;
+          if(gy>=0&&gy<this.MAP_H&&gx>=0&&gx<this.MAP_W) grid[gy][gx]=false;
+        }
+
+    // Clear stair tiles from wall grid
+    for (const stair of this.stairs) {
+      for (let sy=0; sy<stair.h; sy++)
+        for (let sx=0; sx<stair.w; sx++) {
+          const gy=stair.y+sy, gx=stair.x+sx;
+          if(gy>=0&&gy<this.MAP_H&&gx>=0&&gx<this.MAP_W) grid[gy][gx]=false;
+        }
+    }
+
+    const neighbors = (x,y) => [[x-1,y],[x+1,y],[x,y-1],[x,y+1]];
+    for (let y=0; y<this.MAP_H; y++)
+      for (let x=0; x<this.MAP_W; x++) {
+        if (!grid[y][x]) continue;
+        const visible = neighbors(x,y).some(([nx,ny]) =>
+          nx>=0&&nx<this.MAP_W&&ny>=0&&ny<this.MAP_H&&!grid[ny][nx]);
+        if (visible) {
+          const { x: sx, y: sy } = tileToScreen(x, y, ox, oy);
+          const wallImg = this.add.image(sx, sy, 'tile_wall')
+            .setDepth(isoDepth(x, y) + 0.5)
+            .setOrigin(0.5, 0.67);
+          this._floorObjects[floorNum].push(wallImg);
+        }
+        // Physics body in world space
+        const b = this.add.rectangle(x*T+T/2, y*T+T/2, T, T).setVisible(false);
+        this.physics.add.existing(b, true);
+        this._floorWalls[floorNum].push(b);
+        this.wallGroup.add(b);
+      }
+  }
+
+  _placeStairs(T) {
+    const ox = this._isoOffsetX, oy = this._isoOffsetY;
+    this.stairZones = [];
+    for (const stair of this.stairs) {
+      const texKey = stair.toFloor > stair.fromFloor ? 'tile_stairs' : 'tile_stairs_down';
+      const useTex = this.textures.exists(texKey) ? texKey : 'tile_floor';
+      for (let sy = 0; sy < stair.h; sy++)
+        for (let sx = 0; sx < stair.w; sx++) {
+          const { x, y } = tileToScreen(stair.x+sx, stair.y+sy, ox, oy);
+          const img = this.add.image(x, y, useTex)
+            .setDepth(isoDepth(stair.x+sx, stair.y+sy) + 0.2);
+          this._floorObjects[stair.fromFloor].push(img);
+        }
+
+      const zone = this.add.zone(
+        (stair.x + stair.w / 2) * T,
+        (stair.y + stair.h / 2) * T,
+        stair.w * T,
+        stair.h * T
+      );
+      zone.setData('fromFloor', stair.fromFloor);
+      zone.setData('toFloor', stair.toFloor);
+      this.stairZones.push(zone);
+    }
+  }
+
+  _showFloor(floorNum) {
+    for (const [fNum, objects] of Object.entries(this._floorObjects)) {
+      const show = parseInt(fNum) === floorNum;
+      for (const obj of objects) {
+        if (obj && !obj.destroyed) obj.setVisible(show);
+      }
+    }
+
+    for (const [fNum, walls] of Object.entries(this._floorWalls)) {
+      const enable = parseInt(fNum) === floorNum;
+      for (const wall of walls) {
+        if (wall && wall.body && !wall.destroyed) {
+          wall.body.enable = enable;
+        }
+      }
+    }
+
+    for (const [fNum, furniture] of Object.entries(this._floorFurniture)) {
+      const enable = parseInt(fNum) === floorNum;
+      for (const body of furniture) {
+        if (body && body.body && !body.destroyed) {
+          body.body.enable = enable;
+        }
+      }
+    }
+
+    for (const [id, sprite] of Object.entries(this.npcs)) {
+      const npcFloor = this._npcFloors[id] ?? 0;
+      const show = npcFloor === floorNum;
+      sprite.setVisible(false); // Physics sprites always hidden
+      if (sprite.body) sprite.body.enable = show;
+      const isoSprite = this._npcIsoSprites?.[id];
+      if (isoSprite) isoSprite.setVisible(show);
+      if (this.npcLabels[id]) this.npcLabels[id].setVisible(show);
+      if (this._npcLabelBgs?.[id]) this._npcLabelBgs[id].setVisible(show);
+    }
+
+    for (const [id, ev] of Object.entries(this.evidenceItems)) {
+      if (ev.collected) continue;
+      const evFloor = ev.floor ?? 0;
+      const show = evFloor === floorNum;
+      if (ev.sprite && !ev.sprite.destroyed) {
+        ev.sprite.setVisible(false); // Physics sprites always hidden
+        if (ev.sprite.body) ev.sprite.body.enable = show;
+      }
+      if (ev.isoSprite && !ev.isoSprite.destroyed) ev.isoSprite.setVisible(show);
+      if (ev.glow && !ev.glow.destroyed) ev.glow.setVisible(show);
+    }
+
+    this._updateFloorIndicator(floorNum);
+  }
+
+  async _switchFloor(toFloor) {
+    if (this._floorTransitioning || toFloor === this.currentFloor) return;
+    this._floorTransitioning = true;
+
+    const cam = this.cameras.main;
+
+    const fadeRect = this.add.rectangle(
+      cam.width / 2,
+      cam.height / 2,
+      cam.width * 2,
+      cam.height * 2,
+      0x000000, 0
+    ).setScrollFactor(0).setDepth(500);
+
+    await new Promise(resolve => {
+      this.tweens.add({
+        targets: fadeRect, alpha: 1, duration: 400, ease: 'Power2',
+        onComplete: resolve
+      });
+    });
+
+    this.currentFloor = toFloor;
+    this._showFloor(toFloor);
+
+    window.gameAPI?.setFloor(toFloor).catch(() => {});
+
+    const floorName = toFloor === 0 ? 'Ground Floor' : toFloor === 1 ? 'Upper Floor' : 'Basement';
+    const transText = this.add.text(
+      cam.width / 2, cam.height / 2,
+      '↕ ' + floorName,
+      { fontFamily: '"Playfair Display", serif', fontSize: '16px', color: '#c9a84c',
+        stroke: '#0a0a0a', strokeThickness: 3 }
+    ).setOrigin(0.5).setScrollFactor(0).setDepth(501).setAlpha(1);
+
+    await new Promise(r => this.time.delayedCall(500, r));
+
+    await new Promise(resolve => {
+      this.tweens.add({
+        targets: fadeRect, alpha: 0, duration: 400, ease: 'Power2',
+        onComplete: resolve
+      });
+    });
+
+    this.tweens.add({
+      targets: transText, alpha: 0, duration: 600,
+      onComplete: () => { transText.destroy(); fadeRect.destroy(); }
+    });
+
+    this._floorTransitioning = false;
+  }
+
+  _checkStairs() {
+    if (this._floorTransitioning) return;
+    if (!this.stairZones) return;
+
+    const px = this.player.x;
+    const py = this.player.y;
+
+    let insideAnyZone = false;
+    for (const zone of this.stairZones) {
+      if (zone.getData('fromFloor') !== this.currentFloor) continue;
+
+      const zx = zone.x;
+      const zy = zone.y;
+      const hw = zone.width / 2;
+      const hh = zone.height / 2;
+
+      if (px > zx - hw && px < zx + hw && py > zy - hh && py < zy + hh) {
+        insideAnyZone = true;
+        if (!this._stairCooldown) {
+          const toFloor = zone.getData('toFloor');
+          this._stairCooldown = true;
+          this._switchFloor(toFloor);
+        }
+        break;
+      }
+    }
+
+    if (!insideAnyZone) {
+      this._stairCooldown = false;
+    }
+  }
+
+  _updateFloorIndicator(floorNum) {
+    const el = document.getElementById('hud-floor-indicator');
+    if (!el) return;
+    const labels = { '-1': 'Basement', '0': 'Ground Floor', '1': 'Upper Floor' };
+    el.textContent = '🏠 ' + (labels[floorNum] ?? `Floor ${floorNum}`);
+    el.title = labels[floorNum] ?? `Floor ${floorNum}`;
+  }
+
   _placeCrimeScene(T, world) {
+    const ox = this._isoOffsetX, oy = this._isoOffsetY;
     // Determine crime scene room from victim data or use first room
     const victim = world?.victim;
     let crimeRoomId = null;
@@ -537,85 +930,225 @@ export default class RandomManorScene extends Phaser.Scene {
     const room = this.rooms[crimeRoomId];
     if (!room) return;
 
-    const cx = (room.x + Math.floor(room.w / 2)) * T + T / 2;
-    const cy = (room.y + Math.floor(room.h / 2)) * T + T / 2;
+    const tcx = room.x + Math.floor(room.w / 2);
+    const tcy = room.y + Math.floor(room.h / 2);
     this._crimeSceneRoom = room.name;
-
+    const crimeFloor = this.multiFloor ? (room.floorNum ?? 0) : 0;
     const victimName = victim?.name || 'The victim';
 
-    // Body outline in center of room
-    this.add.image(cx, cy, 'crime_body_outline').setDepth(2).setAlpha(0.85);
+    const { x: sx, y: sy } = tileToScreen(tcx, tcy, ox, oy);
+    const bodyImg = this.add.image(sx, sy, 'crime_body_outline')
+      .setDepth(isoDepth(tcx, tcy) + 0.15).setAlpha(0.85);
 
-    // Blood splatters near the body
-    this.add.image(cx + T, cy - T * 0.5, 'crime_blood_1').setDepth(2).setAlpha(0.7);
-    this.add.image(cx - T * 0.8, cy + T * 0.6, 'crime_blood_2').setDepth(2).setAlpha(0.6);
-    this.add.image(cx + T * 1.5, cy + T, 'crime_blood_1').setDepth(2).setAlpha(0.5);
+    const { x: b1x, y: b1y } = tileToScreen(tcx + 1, tcy, ox, oy);
+    const blood1 = this.add.image(b1x, b1y, 'crime_blood_1')
+      .setDepth(isoDepth(tcx+1, tcy) + 0.1).setAlpha(0.7);
+    const { x: b2x, y: b2y } = tileToScreen(tcx - 1, tcy + 1, ox, oy);
+    const blood2 = this.add.image(b2x, b2y, 'crime_blood_2')
+      .setDepth(isoDepth(tcx-1, tcy+1) + 0.1).setAlpha(0.6);
+    const { x: b3x, y: b3y } = tileToScreen(tcx + 1, tcy + 1, ox, oy);
+    const blood3 = this.add.image(b3x, b3y, 'crime_blood_1')
+      .setDepth(isoDepth(tcx+1, tcy+1) + 0.1).setAlpha(0.5);
 
-    // Crime tape near the top edge of the room
-    const tapeX = (room.x + Math.floor(room.w / 2)) * T;
-    const tapeY = room.y * T + T + 4;
-    this.add.image(tapeX, tapeY, 'crime_tape').setDepth(2).setAlpha(0.8);
-    this.add.image(tapeX, tapeY + 8, 'crime_tape').setDepth(2).setAlpha(0.8);
+    const ttx = room.x + Math.floor(room.w / 2);
+    const tty = room.y + 1;
+    const { x: tx, y: ty } = tileToScreen(ttx, tty, ox, oy);
+    const tape1 = this.add.image(tx, ty, 'crime_tape').setDepth(isoDepth(ttx, tty) + 0.2).setAlpha(0.8);
+    const tape2 = this.add.image(tx, ty + 6, 'crime_tape').setDepth(isoDepth(ttx, tty) + 0.2).setAlpha(0.8);
+
+    if (this.multiFloor) {
+      this._floorObjects[crimeFloor].push(bodyImg, blood1, blood2, blood3, tape1, tape2);
+    }
 
     this._crimeDescription = `The crime scene. ${victimName} was found dead here in the ${room.name}. The chalk outline and dark stains mark where the body fell.`;
   }
 
   _placeFurniture(T) {
-    // Place 1-2 furniture items per room
-    const furnKeys = ['furn_table', 'furn_desk', 'furn_bookshelf', 'furn_plant'];
+    const ox = this._isoOffsetX, oy = this._isoOffsetY;
+    // Prefer AI-designed furniture; generic items as reliable fallback
+    const customKeys = [];
+    const genericKeys = ['furn_table', 'furn_desk', 'furn_bookshelf', 'furn_plant', 'furn_crate', 'furn_cabinet'];
+    const ca = window._generatedWorld?.creativeAssets;
+    if (Array.isArray(ca?.furniture)) {
+      for (const furn of ca.furniture) {
+        if (furn?._texKey && this.textures.exists(furn._texKey)) {
+          customKeys.push(furn._texKey);
+        }
+      }
+    }
+    // Mix custom + generic so rooms always have recognizable furniture.
+    const furnKeys = customKeys.length >= 4
+      ? [...customKeys, ...customKeys, ...genericKeys]
+      : [...customKeys, ...genericKeys];
+
     const rooms = Object.values(this.rooms);
     for (const room of rooms) {
-      const count = 1 + Math.floor(Math.random() * 2);
-      for (let i = 0; i < count; i++) {
-        const fx = room.x + 2 + Math.floor(Math.random() * (room.w - 4));
-        const fy = room.y + 2 + Math.floor(Math.random() * (room.h - 4));
-        const key = furnKeys[Math.floor(Math.random() * furnKeys.length)];
-        const img = this.add.image(fx*T+T/2, fy*T+T/2, key).setDepth(2);
-        const body = this.add.rectangle(fx*T+T/2, fy*T+T/2, img.width, img.height).setVisible(false);
+      // Scale furniture count with room size
+      const roomArea = room.w * room.h;
+      const baseCount = roomArea >= 80 ? 5 : roomArea >= 40 ? 4 : 2;
+      const count = Math.min(baseCount, furnKeys.length);
+      const floorNum = this.multiFloor ? (room.floorNum ?? 0) : 0;
+
+      // Generate composed placement positions — furniture placed in logical spots
+      const positions = this._composeFurniturePositions(room, count);
+      const usedKeys = new Set();
+
+      for (let i = 0; i < positions.length; i++) {
+        const { fx, fy } = positions[i];
+        // Pick furniture, avoid repeats where possible
+        let key;
+        const available = furnKeys.filter(k => !usedKeys.has(k));
+        if (available.length > 0) {
+          key = available[Math.floor(Math.random() * available.length)];
+        } else {
+          key = furnKeys[Math.floor(Math.random() * furnKeys.length)];
+        }
+        usedKeys.add(key);
+
+        // Visual at iso position
+        const { x, y } = tileToScreen(fx, fy, ox, oy);
+        const img = this.add.image(x, y, key)
+          .setDepth(isoDepth(fx, fy) + 0.3)
+          .setOrigin(0.5, 0.75);
+        // Physics body in world space
+        const body = this.add.rectangle(fx*T+T/2, fy*T+T/2, T, T).setVisible(false);
         this.physics.add.existing(body, true);
         this.furnitureGroup.add(body);
+        if (this.multiFloor) {
+          this._floorObjects[floorNum].push(img);
+          this._floorFurniture[floorNum].push(body);
+        }
       }
     }
   }
 
+  /**
+   * Generate logical furniture positions within a room.
+   * Places items against walls, in corners, and at the center — like a designed space.
+   */
+  _composeFurniturePositions(room, count) {
+    const positions = [];
+    const used = new Set();
+    const key = (x, y) => `${x},${y}`;
+    const margin = 1; // 1 tile from wall for walkability
+
+    // Named spots in priority order: corners, wall-centers, center
+    const spots = [];
+    // Corners (against walls — great for shelves, cabinets, plants)
+    spots.push({ fx: room.x + margin + 1, fy: room.y + margin + 1 });     // top-left corner
+    spots.push({ fx: room.x + room.w - margin - 2, fy: room.y + margin + 1 }); // top-right corner
+    spots.push({ fx: room.x + margin + 1, fy: room.y + room.h - margin - 2 }); // bottom-left corner
+    spots.push({ fx: room.x + room.w - margin - 2, fy: room.y + room.h - margin - 2 }); // bottom-right corner
+    // Wall centers (against walls — desks, shelves)
+    const midX = room.x + Math.floor(room.w / 2);
+    const midY = room.y + Math.floor(room.h / 2);
+    spots.push({ fx: midX, fy: room.y + margin + 1 });     // top wall center
+    spots.push({ fx: midX, fy: room.y + room.h - margin - 2 }); // bottom wall center
+    spots.push({ fx: room.x + margin + 1, fy: midY });     // left wall center
+    spots.push({ fx: room.x + room.w - margin - 2, fy: midY }); // right wall center
+    // Room center (tables, centerpiece)
+    spots.push({ fx: midX, fy: midY });
+    // Offset center spots
+    spots.push({ fx: midX - 2, fy: midY + 1 });
+    spots.push({ fx: midX + 2, fy: midY - 1 });
+
+    // Shuffle spots, then take the first 'count' valid ones
+    for (let i = spots.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [spots[i], spots[j]] = [spots[j], spots[i]];
+    }
+
+    for (const spot of spots) {
+      if (positions.length >= count) break;
+      // Validate bounds
+      const fx = Math.max(room.x + 1, Math.min(room.x + room.w - 2, spot.fx));
+      const fy = Math.max(room.y + 1, Math.min(room.y + room.h - 2, spot.fy));
+      const k = key(fx, fy);
+      if (used.has(k)) continue;
+      // Don't place too close to another piece
+      let tooClose = false;
+      for (const p of positions) {
+        if (Math.abs(p.fx - fx) <= 1 && Math.abs(p.fy - fy) <= 1) { tooClose = true; break; }
+      }
+      if (tooClose) continue;
+      used.add(k);
+      positions.push({ fx, fy });
+    }
+
+    // Fill any remaining slots with random valid positions
+    let attempts = 0;
+    while (positions.length < count && attempts < 20) {
+      attempts++;
+      const fx = room.x + 2 + Math.floor(Math.random() * Math.max(1, room.w - 4));
+      const fy = room.y + 2 + Math.floor(Math.random() * Math.max(1, room.h - 4));
+      const k = key(fx, fy);
+      if (used.has(k)) continue;
+      let tooClose = false;
+      for (const p of positions) {
+        if (Math.abs(p.fx - fx) <= 1 && Math.abs(p.fy - fy) <= 1) { tooClose = true; break; }
+      }
+      if (tooClose) continue;
+      used.add(k);
+      positions.push({ fx, fy });
+    }
+
+    return positions;
+  }
+
   _placeNPCs(T, world) {
+    const ox = this._isoOffsetX, oy = this._isoOffsetY;
     for (const char of world.characters) {
       const room = this.rooms[char.location] || Object.values(this.rooms)[0];
-      // Place inside room interior
       const nx = room.x + 2 + Math.floor(Math.random() * (room.w - 4));
       const ny = room.y + 2 + Math.floor(Math.random() * (room.h - 4));
 
       const texKey = 'npc_' + char.id;
       const spriteKey = this.textures.exists(texKey) ? texKey : 'npc_' + world.characters[0].id;
-      const sprite = this.physics.add.sprite(nx*T+T/2, ny*T+T/2, spriteKey)
-        .setDepth(5);
+
+      // Physics sprite (invisible, in world space for collisions)
+      const sprite = this.physics.add.sprite(nx*T+T/2, ny*T+T/2, spriteKey).setVisible(false);
       sprite.body.setSize(28, 28);
       sprite.setCollideWorldBounds(true);
       sprite.setPushable(false);
       sprite.setData('id', char.id);
       sprite.setData('name', char.name);
 
-      const label = this.add.text(nx*T+T/2, ny*T-8, char.name, {
-        fontFamily: '"Playfair Display", serif', fontSize: '9px', color: '#c9a84c',
+      if (this.multiFloor) {
+        const npcFloor = room.floorNum ?? 0;
+        sprite.setData('floor', npcFloor);
+        this._npcFloors[char.id] = npcFloor;
+      }
+
+      // Visual iso sprite
+      const { x: ix, y: iy } = tileToScreen(nx, ny, ox, oy);
+      const isoSprite = this.add.sprite(ix, iy, spriteKey)
+        .setDepth(isoDepth(nx, ny) + 0.4)
+        .setOrigin(0.5, 0.85);
+      this._npcIsoSprites[char.id] = isoSprite;
+
+      // Label with background
+      const label = this.add.text(ix, iy - 10, '\u{1F610} ' + char.name, {
+        fontFamily: '"Playfair Display", serif', fontSize: '9px', color: '#e8dcc8',
         stroke: '#0a0a0a', strokeThickness: 2
-      }).setOrigin(0.5).setDepth(10);
+      }).setOrigin(0.5).setDepth(isoDepth(nx, ny) + 10.1);
+      const bg = this.add.graphics().setDepth(isoDepth(nx, ny) + 10);
+      const pad = { x: 7, y: 3 };
+      bg.fillStyle(0x111111, 0.85);
+      bg.fillRoundedRect(-label.width / 2 - pad.x, -label.height / 2 - pad.y,
+        label.width + pad.x * 2, label.height + pad.y * 2, 6);
+      bg.setPosition(ix, iy - 10);
+      this._npcLabelBgs[char.id] = bg;
       this.npcLabels[char.id] = label;
 
-      this.tweens.add({
-        targets: sprite, scaleY:{from:1,to:1.03},
-        duration:2000, yoyo:true, repeat:-1, ease:'Sine.easeInOut'
-      });
       this.npcs[char.id] = sprite;
     }
 
-    // NPC-to-NPC colliders
     const npcList = Object.values(this.npcs);
     for (let i = 0; i < npcList.length; i++) {
       for (let j = i + 1; j < npcList.length; j++) {
         this.physics.add.collider(npcList[i], npcList[j]);
       }
     }
-    // NPC-to-wall colliders so NPCs can't escape rooms
     for (const sprite of npcList) {
       this.physics.add.collider(sprite, this.wallGroup);
       this.physics.add.collider(sprite, this.furnitureGroup);
@@ -623,44 +1156,64 @@ export default class RandomManorScene extends Phaser.Scene {
   }
 
   _placeEvidence(T, world) {
+    const ox = this._isoOffsetX, oy = this._isoOffsetY;
     const positions = world.evidencePositions || {};
     for (const ev of world.evidence) {
       const pos = positions[ev.id];
       if (!pos) continue;
-      const glow = this.add.image(pos.x*T+T/2, pos.y*T+T/2, 'ev_glow').setDepth(3).setAlpha(0.6);
+      const evFloor = this.multiFloor ? (pos.floor ?? 0) : 0;
+      const { x: ix, y: iy } = tileToScreen(pos.x, pos.y, ox, oy);
+      const glow = this.add.image(ix, iy, 'ev_glow')
+        .setDepth(isoDepth(pos.x, pos.y) + 1).setAlpha(0.7).setScale(1.5);
       this.tweens.add({
-        targets:glow, alpha:{from:0.3,to:0.8}, scale:{from:0.9,to:1.2},
+        targets:glow, alpha:{from:0.4,to:1.0}, scale:{from:1.3,to:1.8},
         duration:1200, yoyo:true, repeat:-1, ease:'Sine.easeInOut'
       });
       const texKey = 'ev_' + ev.id;
-      const spriteKey = this.textures.exists(texKey) ? texKey : 'ev_glow';
-      const sprite = this.physics.add.sprite(pos.x*T+T/2, pos.y*T+T/2, spriteKey)
-        .setDepth(4).setImmovable(true);
-      sprite.body.setSize(20,20);
-      sprite.setData('id', ev.id);
-      this.evidenceItems[ev.id] = { sprite, glow, collected:false };
+      const spKey = this.textures.exists(texKey) ? texKey : 'ev_glow';
+      const evSprite = this.add.image(ix, iy, spKey)
+        .setDepth(isoDepth(pos.x, pos.y) + 1.1)
+        .setOrigin(0.5, 0.75);
+      // Physics sprite in world space
+      const physSprite = this.physics.add.sprite(pos.x*T+T/2, pos.y*T+T/2, spKey)
+        .setVisible(false).setImmovable(true);
+      physSprite.body.setSize(20,20);
+      physSprite.setData('id', ev.id);
+      if (this.multiFloor) physSprite.setData('floor', evFloor);
+      this.evidenceItems[ev.id] = { sprite: physSprite, isoSprite: evSprite, glow, collected:false, floor: evFloor };
     }
   }
 
   _setupPlayer(T) {
-    // Start in the first room
-    const firstRoom = Object.values(this.rooms)[0];
+    const allRooms = Object.values(this.rooms);
+    const firstRoom = this.multiFloor
+      ? (allRooms.find(r => (r.floorNum ?? 0) === 0) || allRooms[0])
+      : allRooms[0];
     const px = firstRoom.x + Math.floor(firstRoom.w / 2);
     const py = firstRoom.y + Math.floor(firstRoom.h / 2);
-    this.player = this.physics.add.sprite(px*T+T/2, py*T+T/2, 'player_down_0').setDepth(6);
+
+    // Physics body (invisible, world space)
+    this.player = this.physics.add.sprite(px*T+T/2, py*T+T/2, 'player_down_0').setVisible(false);
     this.player.body.setSize(14, 14).setOffset(9, 16);
     this.player.setCollideWorldBounds(true);
     this.physics.world.setBounds(0, 0, this.MAP_W * T, this.MAP_H * T);
     this.physics.add.collider(this.player, this.wallGroup);
     this.physics.add.collider(this.player, this.furnitureGroup);
     Object.values(this.npcs).forEach(s => this.physics.add.collider(this.player, s));
+
+    // Visual iso sprite
+    const ox = this._isoOffsetX, oy = this._isoOffsetY;
+    const { x: ix, y: iy } = tileToScreen(px, py, ox, oy);
+    this._playerIso = this.add.sprite(ix, iy, 'player_down_0')
+      .setDepth(isoDepth(px, py) + 0.4)
+      .setOrigin(0.5, 0.85);
   }
 
   _setupCamera(T) {
-    this.cameras.main.startFollow(this.player, true, 0.08, 0.08);
-    this.cameras.main.setBounds(0, 0, this.MAP_W*T, this.MAP_H*T);
+    this.cameras.main.startFollow(this._playerIso, true, 0.08, 0.08);
+    this.cameras.main.setBounds(0, 0, this._isoMapW, this._isoMapH);
     this.cameras.main.setBackgroundColor('#0a0a0a');
-    this.cameras.main.setZoom(2);
+    this.cameras.main.setZoom(1.5);
   }
 
   _setupInput() {
@@ -679,19 +1232,115 @@ export default class RandomManorScene extends Phaser.Scene {
   }
 
   _createAmbientParticles() {
-    if (!this.textures.exists('dust')) {
+    const ca = window._generatedWorld?.creativeAssets;
+    const useCreative = ca?.particles && this.textures.exists('creative_particle');
+
+    if (!useCreative && !this.textures.exists('dust')) {
       const c = this.textures.createCanvas('dust', 2, 2);
       c.context.fillStyle = '#e8dcc8';
       c.context.fillRect(0, 0, 2, 2);
       c.refresh();
     }
-    this.add.particles(0, 0, 'dust', {
+
+    const texKey = useCreative ? 'creative_particle' : 'dust';
+    const p = ca?.particles || {};
+    this.add.particles(0, 0, texKey, {
       x: { min: 0, max: this.MAP_W * this.T },
       y: { min: 0, max: this.MAP_H * this.T },
-      lifespan: 6000, speed: { min: 3, max: 10 },
-      alpha: { start: 0, end: 0.2 }, scale: { start: 0.5, end: 1.5 },
-      frequency: 400, blendMode: 'ADD',
+      lifespan: p.lifespan || 6000,
+      speed: p.speed || { min: 3, max: 10 },
+      alpha: p.alpha || { start: 0, end: 0.2 },
+      scale: { start: 0.5, end: 1.5 },
+      frequency: p.frequency || 400,
+      blendMode: p.blendMode || 'ADD',
     }).setDepth(3);
+  }
+
+  /**
+   * Place AI-designed creative assets: room decorations, ambient props,
+   * and per-room atmosphere tints.
+   */
+  _placeCreativeAssets(T, world) {
+    const ca = world?.creativeAssets;
+    if (!ca) return;
+    const ox = this._isoOffsetX, oy = this._isoOffsetY;
+
+    // ── Room decorations ──
+    if (Array.isArray(ca.decorations)) {
+      for (const roomDecor of ca.decorations) {
+        const room = this.rooms[roomDecor.roomId];
+        if (!room) continue;
+        const floorNum = this.multiFloor ? (room.floorNum ?? 0) : 0;
+
+        for (const item of (roomDecor.items || [])) {
+          const texKey = item._texKey;
+          if (!texKey || !this.textures.exists(texKey)) continue;
+
+          const dx = room.x + 2 + Math.floor(Math.random() * Math.max(1, room.w - 4));
+          const dy = room.y + 2 + Math.floor(Math.random() * Math.max(1, room.h - 4));
+          const { x, y } = tileToScreen(dx, dy, ox, oy);
+          const img = this.add.image(x, y, texKey)
+            .setDepth(isoDepth(dx, dy) + 0.2)
+            .setOrigin(0.5, 0.75);
+
+          if (this.multiFloor) {
+            this._floorObjects[floorNum].push(img);
+          }
+        }
+      }
+    }
+
+    // ── Ambient props — scattered in random rooms ──
+    if (Array.isArray(ca.ambientProps)) {
+      const roomList = Object.values(this.rooms);
+      for (const prop of ca.ambientProps) {
+        const texKey = prop._texKey;
+        if (!texKey || !this.textures.exists(texKey)) continue;
+        const count = Math.min(prop.count || 2, 8);
+
+        for (let i = 0; i < count; i++) {
+          const room = roomList[Math.floor(Math.random() * roomList.length)];
+          const floorNum = this.multiFloor ? (room.floorNum ?? 0) : 0;
+          const px = room.x + 1 + Math.floor(Math.random() * Math.max(1, room.w - 2));
+          const py = room.y + 1 + Math.floor(Math.random() * Math.max(1, room.h - 2));
+          const { x, y } = tileToScreen(px, py, ox, oy);
+          const img = this.add.image(x, y, texKey)
+            .setDepth(isoDepth(px, py) + 0.1).setAlpha(0.7)
+            .setOrigin(0.5, 0.75);
+
+          if (this.multiFloor) {
+            this._floorObjects[floorNum].push(img);
+          }
+        }
+      }
+    }
+
+    // ── Per-room atmosphere tints ──
+    if (ca.roomAmbiance && typeof ca.roomAmbiance === 'object') {
+      for (const [roomId, amb] of Object.entries(ca.roomAmbiance)) {
+        const room = this.rooms[roomId];
+        if (!room || !amb) continue;
+        const tintCol = parseInt((amb.tintColor || '#000000').replace('#', ''), 16) || 0;
+        const tintAlpha = Math.min(Math.max(amb.tintAlpha || 0.05, 0), 0.15);
+        const floorNum = this.multiFloor ? (room.floorNum ?? 0) : 0;
+
+        const rcx = room.x + room.w / 2;
+        const rcy = room.y + room.h / 2;
+        const { x: rx, y: ry } = tileToScreen(rcx, rcy, ox, oy);
+        const rect = this.add.rectangle(rx, ry,
+          room.w * ISO_TILE_W / 2, room.h * ISO_TILE_H / 2,
+          tintCol, 0
+        ).setDepth(1).setAlpha(tintAlpha);
+
+        if (this.multiFloor) {
+          this._floorObjects[floorNum].push(rect);
+        }
+      }
+    }
+
+    const decoCount = ca.decorations?.reduce((n, d) => n + (d.items?.length || 0), 0) || 0;
+    const propCount = ca.ambientProps?.reduce((n, p) => n + (p.count || 0), 0) || 0;
+    console.log(`[Creative] Placed ${decoCount} decorations, ~${propCount} ambient props`);
   }
 
   // ── UPDATE ─────────────────────────────────────────────────
@@ -740,14 +1389,91 @@ export default class RandomManorScene extends Phaser.Scene {
     }
 
     this._handleMovement();
+    this._syncIsoPositions();
+    if (this.multiFloor) this._checkStairs();
     updateNPCMovement(this, this.game.loop.delta);
+    syncEmotionPositions(this.npcs, this.npcLabels);
     updateTimedEvent(this, this.game.loop.delta);
     checkTimedEventTrigger(this);
     updateChase(this, this.game.loop.delta);
     updateLighting(this);
     this._handleInteractions();
+    this._checkProximityBubbles();
     updateNPCApproach(this, this.game.loop.delta);
     this._updateRoomLabel();
+  }
+
+  _syncIsoPositions() {
+    const T = this.T;
+    const ox = this._isoOffsetX, oy = this._isoOffsetY;
+
+    // Player
+    if (this.player && this._playerIso) {
+      const tx = this.player.x / T;
+      const ty = this.player.y / T;
+      const { x, y } = tileToScreen(tx, ty, ox, oy);
+      this._playerIso.setPosition(x, y);
+      this._playerIso.setDepth(isoDepth(tx, ty) + 0.4);
+
+      // Update player facing texture
+      const vx = this.player.body?.velocity?.x || 0;
+      const vy = this.player.body?.velocity?.y || 0;
+      if (Math.abs(vx) > 2 || Math.abs(vy) > 2) {
+        if (Math.abs(vx) > Math.abs(vy)) this.facing = vx > 0 ? 'right' : 'left';
+        else this.facing = vy > 0 ? 'down' : 'up';
+        this._playerIso.anims.play('walk-' + this.facing, true);
+      } else {
+        this._playerIso.anims.play('idle-' + this.facing, true);
+      }
+    }
+
+    // NPCs — sync iso sprites + labels
+    for (const [id, physSprite] of Object.entries(this.npcs)) {
+      const isoSprite = this._npcIsoSprites?.[id];
+      if (!isoSprite || !physSprite) continue;
+      const tx = physSprite.x / T;
+      const ty = physSprite.y / T;
+      const { x, y } = tileToScreen(tx, ty, ox, oy);
+      isoSprite.setPosition(x, y);
+      isoSprite.setDepth(isoDepth(tx, ty) + 0.4);
+
+      // Update NPC facing based on velocity
+      const vx = physSprite.body?.velocity?.x || 0;
+      const vy = physSprite.body?.velocity?.y || 0;
+      if (!this._npcFacing) this._npcFacing = {};
+      if (Math.abs(vx) > 2 || Math.abs(vy) > 2) {
+        let dir = 'down';
+        if (Math.abs(vx) > Math.abs(vy)) dir = vx > 0 ? 'right' : 'left';
+        else dir = vy > 0 ? 'down' : 'up';
+        this._npcFacing[id] = dir;
+      }
+
+      // Label + bg follow iso sprite
+      const label = this.npcLabels[id];
+      if (label) {
+        label.setPosition(x, y - 10);
+        label.setDepth(isoDepth(tx, ty) + 10.1);
+      }
+      const bg = this._npcLabelBgs?.[id];
+      if (bg) {
+        bg.setPosition(x, y - 10);
+        bg.setDepth(isoDepth(tx, ty) + 10);
+      }
+    }
+
+    // Evidence iso sprites
+    for (const [id, ev] of Object.entries(this.evidenceItems)) {
+      if (ev.collected || !ev.isoSprite) continue;
+      const tx = ev.sprite.x / T;
+      const ty = ev.sprite.y / T;
+      const { x, y } = tileToScreen(tx, ty, ox, oy);
+      ev.isoSprite.setPosition(x, y);
+      ev.isoSprite.setDepth(isoDepth(tx, ty) + 1.1);
+      if (ev.glow) {
+        ev.glow.setPosition(x, y);
+        ev.glow.setDepth(isoDepth(tx, ty) + 1);
+      }
+    }
   }
 
   _handleMovement() {
@@ -759,8 +1485,6 @@ export default class RandomManorScene extends Phaser.Scene {
     if (this.cursors.down.isDown  || this.wasd.down.isDown)  { vy=speed;  this.facing='down'; }
     if (vx&&vy) { vx*=0.707; vy*=0.707; }
     this.player.setVelocity(vx, vy);
-    if (vx||vy) this.player.anims.play('walk-'+this.facing, true);
-    else this.player.anims.play('idle-'+this.facing, true);
   }
 
   _handleInteractions() {
@@ -768,17 +1492,25 @@ export default class RandomManorScene extends Phaser.Scene {
     let closest = null, closestDist = range, closestType = null;
 
     for (const [id, sprite] of Object.entries(this.npcs)) {
+      if (this.multiFloor && (this._npcFloors[id] ?? 0) !== this.currentFloor) continue;
       const d = Phaser.Math.Distance.Between(this.player.x,this.player.y, sprite.x,sprite.y);
       if (d < closestDist) { closest={id,sprite,name:sprite.getData('name')}; closestDist=d; closestType='npc'; }
     }
     for (const [id, ev] of Object.entries(this.evidenceItems)) {
       if (ev.collected) continue;
+      if (this.multiFloor && (ev.floor ?? 0) !== this.currentFloor) continue;
       const d = Phaser.Math.Distance.Between(this.player.x,this.player.y, ev.sprite.x,ev.sprite.y);
       if (d < closestDist) { closest={id,sprite:ev.sprite}; closestDist=d; closestType='evidence'; }
     }
 
     if (closest) {
-      this.interactPrompt.setPosition(closest.sprite.x, closest.sprite.y-28);
+      // Position the interact prompt at iso coordinates
+      const ox2 = this._isoOffsetX, oy2 = this._isoOffsetY;
+      const closestTx = closest.sprite.x / this.T;
+      const closestTy = closest.sprite.y / this.T;
+      const { x: px, y: py } = tileToScreen(closestTx, closestTy, ox2, oy2);
+      this.interactPrompt.setPosition(px, py - 36);
+      this.interactPrompt.setDepth(isoDepth(closestTx, closestTy) + 20);
       const label = closestType==='npc'
         ? (isNPCApproaching(this, closest.id) ? '[E] Listen' : `[E] Talk to ${closest.name}`)
         : `[E] Examine`;
@@ -803,6 +1535,66 @@ export default class RandomManorScene extends Phaser.Scene {
     }
   }
 
+  _checkProximityBubbles() {
+    const BUBBLE_RANGE = 90;
+    const COOLDOWN = 60000;
+    const DISPLAY_TIME = 3000;
+    const now = Date.now();
+    const T = this.T;
+
+    const PHRASES = {
+      neutral: ['...', 'Hmm.', 'Detective.'],
+      angry:   ["Haven't you bothered me enough?", 'What now?', 'I have nothing to say.', '*glares*'],
+      nervous: ['Oh... you again...', '*fidgets*', 'I-I was just...', 'Please, I...'],
+      friendly:['Detective, a moment?', 'I remembered something...', 'Perhaps I can help.', 'Over here...'],
+    };
+
+    for (const [id, bubble] of Object.entries(this._proxBubbles)) {
+      bubble.timer -= this.game.loop.delta;
+      if (bubble.timer <= 0) {
+        bubble.text.destroy();
+        delete this._proxBubbles[id];
+      } else {
+        const sprite = this.npcs[id];
+        if (sprite && !sprite.destroyed) {
+          const ox = this._isoOffsetX, oy = this._isoOffsetY;
+          const tx = sprite.x / T, ty = sprite.y / T;
+          const { x: bx, y: by } = tileToScreen(tx, ty, ox, oy);
+          bubble.text.setPosition(bx, by - 40);
+          bubble.text.setDepth(isoDepth(tx, ty) + 15);
+          bubble.text.setAlpha(Math.min(1, bubble.timer / 500));
+        }
+      }
+    }
+
+    for (const [id, sprite] of Object.entries(this.npcs)) {
+      if (this.multiFloor && (this._npcFloors[id] ?? 0) !== this.currentFloor) continue;
+      if (this._proxBubbles[id]) continue;
+      if (this._proxCooldowns[id] && now - this._proxCooldowns[id] < COOLDOWN) continue;
+
+      const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, sprite.x, sprite.y);
+      if (d > BUBBLE_RANGE || d < 40) continue;
+
+      const mood = window._npcMoodVariants?.[id] || 'neutral';
+      const pool = PHRASES[mood] || PHRASES.neutral;
+      const text = pool[Math.floor(Math.random() * pool.length)];
+
+      const ox = this._isoOffsetX, oy = this._isoOffsetY;
+      const bTx = sprite.x / T, bTy = sprite.y / T;
+      const { x: bx2, y: by2 } = tileToScreen(bTx, bTy, ox, oy);
+      const bubble = this.add.text(bx2, by2 - 40, text, {
+        fontFamily: '"Lora", serif', fontSize: '8px', color: '#e8dcc8',
+        backgroundColor: 'rgba(10,10,10,0.85)', padding: { x: 5, y: 3 },
+        stroke: '#333', strokeThickness: 1,
+      }).setOrigin(0.5).setDepth(15).setAlpha(0);
+
+      this.tweens.add({ targets: bubble, alpha: 1, duration: 300 });
+
+      this._proxBubbles[id] = { text: bubble, timer: DISPLAY_TIME };
+      this._proxCooldowns[id] = now;
+    }
+  }
+
   async _collectEvidence(evidenceId) {
     const ev = this.evidenceItems[evidenceId];
     if (!ev || ev.collected) return;
@@ -810,10 +1602,12 @@ export default class RandomManorScene extends Phaser.Scene {
       const res = await window.gameAPI.collectEvidence(evidenceId);
       if (res.collected || res.alreadyCollected) {
         ev.collected = true;
+        const targets = [ev.glow];
+        if (ev.isoSprite) targets.push(ev.isoSprite);
         this.tweens.add({
-          targets:[ev.sprite,ev.glow], y:ev.sprite.y-20, alpha:0, scale:0.3,
+          targets, y:'-=20', alpha:0, scale:0.3,
           duration:400, ease:'Power2',
-          onComplete:()=>{ ev.sprite.destroy(); ev.glow.destroy(); }
+          onComplete:()=>{ targets.forEach(t => t.destroy()); ev.sprite.destroy(); }
         });
         if (res.evidence) this._showPopup(res.evidence);
         window.inventoryManager?.refresh();
@@ -850,8 +1644,11 @@ export default class RandomManorScene extends Phaser.Scene {
   _updateRoomLabel() {
     const T = this.T;
     const px = Math.floor(this.player.x/T), py = Math.floor(this.player.y/T);
-    let roomName = 'Hallway';
+    let roomName = this.multiFloor
+      ? (this.currentFloor === 0 ? 'Hallway' : 'Upper Hallway')
+      : 'Hallway';
     for (const room of Object.values(this.rooms)) {
+      if (this.multiFloor && (room.floorNum ?? 0) !== this.currentFloor) continue;
       if (px>=room.x && px<room.x+room.w && py>=room.y && py<room.y+room.h) {
         roomName = room.name; break;
       }
@@ -930,32 +1727,53 @@ export default class RandomManorScene extends Phaser.Scene {
     if (this._hiddenRoomRevealed) return;
     this._hiddenRoomRevealed = true;
     const T = this.T;
+    const hiddenFloor = this.multiFloor ? (room.floorNum ?? 0) : 0;
 
     const needW = room.x + room.w + 1;
     const needH = room.y + room.h + 1;
     if (needW > this.MAP_W) this.MAP_W = needW;
     if (needH > this.MAP_H) this.MAP_H = needH;
 
-    this.rooms[room.id] = { name: room.name, x: room.x, y: room.y, w: room.w, h: room.h, floor: room.floor || 'tile_floor' };
+    const roomEntry = { name: room.name, x: room.x, y: room.y, w: room.w, h: room.h, floor: room.floor || 'tile_floor' };
+    if (this.multiFloor) roomEntry.floorNum = hiddenFloor;
+    this.rooms[room.id] = roomEntry;
 
     if (room.doorway) {
-      this.doors.push(room.doorway);
+      if (this.multiFloor) {
+        if (!this.doors[hiddenFloor]) this.doors[hiddenFloor] = [];
+        this.doors[hiddenFloor].push(room.doorway);
+      } else {
+        this.doors.push(room.doorway);
+      }
     }
+
+    const ox = this._isoOffsetX, oy = this._isoOffsetY;
 
     const floorKey = this.textures.exists(room.floor) ? room.floor : 'tile_floor';
     for (let ry = 0; ry < room.h; ry++)
-      for (let rx = 0; rx < room.w; rx++)
-        this.add.image((room.x+rx)*T+T/2, (room.y+ry)*T+T/2, floorKey).setDepth(0);
+      for (let rx = 0; rx < room.w; rx++) {
+        const { x, y } = tileToScreen(room.x+rx, room.y+ry, ox, oy);
+        const img = this.add.image(x, y, floorKey).setDepth(0);
+        if (this.multiFloor) this._floorObjects[hiddenFloor].push(img);
+      }
 
-    this.add.text((room.x+room.w/2)*T, (room.y+1)*T, room.name, {
-      fontFamily: '"Playfair Display", serif', fontSize: '11px', color: '#c9a84c55'
-    }).setOrigin(0.5).setDepth(1);
+    const rcx = room.x + room.w / 2;
+    const rcy = room.y + 1;
+    const { x: lx, y: ly } = tileToScreen(rcx, rcy, ox, oy);
+    const label = this.add.text(lx, ly, room.name, {
+      fontFamily: '"Playfair Display", serif', fontSize: '11px', color: '#c9a84c',
+      backgroundColor: '#0a0a0acc', padding: { x: 4, y: 2 }
+    }).setOrigin(0.5).setDepth(isoDepth(rcx, rcy) + 5);
+    if (this.multiFloor) this._floorObjects[hiddenFloor].push(label);
 
     if (room.doorway) {
       const d = room.doorway;
       for (let dy = 0; dy < d.h; dy++)
-        for (let dx = 0; dx < d.w; dx++)
-          this.add.image((d.x+dx)*T+T/2, (d.y+dy)*T+T/2, 'tile_floor').setDepth(0);
+        for (let dx = 0; dx < d.w; dx++) {
+          const { x, y } = tileToScreen(d.x+dx, d.y+dy, ox, oy);
+          const img = this.add.image(x, y, 'tile_floor').setDepth(0);
+          if (this.multiFloor) this._floorObjects[hiddenFloor].push(img);
+        }
     }
 
     // Remove wall physics bodies AND visible wall images where the doorway is
@@ -977,12 +1795,17 @@ export default class RandomManorScene extends Phaser.Scene {
       });
     }
 
+    // Gather all doors for the grid (flatten for multi-floor)
+    const allDoors = this.multiFloor
+      ? Object.values(this.doors).filter(Boolean).flat()
+      : this.doors;
+
     const grid = Array.from({length: this.MAP_H}, () => Array(this.MAP_W).fill(true));
     for (const r of Object.values(this.rooms))
       for (let ry = 1; ry < r.h - 1; ry++)
         for (let rx = 1; rx < r.w - 1; rx++)
           if (r.y+ry < this.MAP_H && r.x+rx < this.MAP_W) grid[r.y+ry][r.x+rx] = false;
-    for (const d of this.doors)
+    for (const d of allDoors)
       for (let dy = 0; dy < d.h; dy++)
         for (let dx = 0; dx < d.w; dx++) {
           const gy = d.y+dy, gx = d.x+dx;
@@ -997,11 +1820,17 @@ export default class RandomManorScene extends Phaser.Scene {
         if (!grid[y][x]) continue;
         const visible = neighbors(x, y).some(([nx, ny]) =>
           nx >= 0 && nx < this.MAP_W && ny >= 0 && ny < this.MAP_H && !grid[ny][nx]);
-        if (visible)
-          this.add.image(x*T+T/2, y*T+T/2, 'tile_wall').setDepth(0);
+        if (visible) {
+          const { x: wsx, y: wsy } = tileToScreen(x, y, ox, oy);
+          const wallImg = this.add.image(wsx, wsy, 'tile_wall')
+            .setDepth(isoDepth(x, y) + 0.5)
+            .setOrigin(0.5, 0.67);
+          if (this.multiFloor) this._floorObjects[hiddenFloor].push(wallImg);
+        }
         const b = this.add.rectangle(x*T+T/2, y*T+T/2, T, T).setVisible(false);
         this.physics.add.existing(b, true);
         this.wallGroup.add(b);
+        if (this.multiFloor) this._floorWalls[hiddenFloor].push(b);
       }
 
     for (const ev of (room.evidence || [])) {
@@ -1014,21 +1843,34 @@ export default class RandomManorScene extends Phaser.Scene {
         g.generateTexture(evKey, 16, 16); g.destroy();
       }
 
-      const glow = this.add.image(ev.x*T+T/2, ev.y*T+T/2, 'ev_glow').setDepth(8).setAlpha(0.7).setScale(1.5);
+      const { x: eix, y: eiy } = tileToScreen(ev.x, ev.y, ox, oy);
+      const glow = this.add.image(eix, eiy, 'ev_glow')
+        .setDepth(isoDepth(ev.x, ev.y) + 1).setAlpha(0.7).setScale(1.5);
       this.tweens.add({
         targets: glow, alpha:{from:0.4,to:1.0}, scale:{from:1.3,to:1.8},
         duration:1200, yoyo:true, repeat:-1, ease:'Sine.easeInOut'
       });
-      const sprite = this.physics.add.sprite(ev.x*T+T/2, ev.y*T+T/2, evKey)
-        .setDepth(9).setImmovable(true).setScale(1.5);
-      sprite.body.setSize(20, 20);
-      sprite.setData('id', ev.id);
-      this.evidenceItems[ev.id] = { sprite, glow, collected: false };
-      this.physics.add.collider(this.player, sprite);
+      const evSprite = this.add.image(eix, eiy, evKey)
+        .setDepth(isoDepth(ev.x, ev.y) + 1.1).setScale(1.5)
+        .setOrigin(0.5, 0.75);
+      const physSprite = this.physics.add.sprite(ev.x*T+T/2, ev.y*T+T/2, evKey)
+        .setVisible(false).setImmovable(true);
+      physSprite.body.setSize(20, 20);
+      physSprite.setData('id', ev.id);
+      if (this.multiFloor) physSprite.setData('floor', hiddenFloor);
+      this.evidenceItems[ev.id] = { sprite: physSprite, isoSprite: evSprite, glow, collected: false, floor: hiddenFloor };
+      this.physics.add.collider(this.player, physSprite);
     }
 
-    this.cameras.main.setBounds(0, 0, this.MAP_W * T, this.MAP_H * T);
+    // Recompute iso bounds
+    const newBounds = isoMapBounds(this.MAP_W, this.MAP_H);
+    this._isoOffsetX = newBounds.offsetX;
+    this._isoOffsetY = newBounds.offsetY;
+    this._isoMapW = newBounds.width;
+    this._isoMapH = newBounds.height;
+    this.cameras.main.setBounds(0, 0, this._isoMapW, this._isoMapH);
     this.cameras.main.shake(500, 0.01);
+    if (this.multiFloor) this._showFloor(this.currentFloor);
     this.time.delayedCall(600, () => {
       window.gameAPI.narrate('hidden_room', `A hidden passage has been discovered! The ${room.name} lies beyond a secret entrance.`).then(result => {
         if (result?.narration) {
@@ -1060,35 +1902,48 @@ export default class RandomManorScene extends Phaser.Scene {
     if (this._redHerringSpawned) return;
     this._redHerringSpawned = true;
     const T = this.T;
+    const ox = this._isoOffsetX, oy = this._isoOffsetY;
 
     const texKey = 'npc_' + npc.id;
     if (!this.textures.exists(texKey)) {
       const bodyColor = npc.color || 0x4a0e4e;
       const g = this.make.graphics({x:0, y:0, add:false});
-      g.fillStyle(0xf5d5b8, 1); g.fillCircle(16, 8, 7);
-      g.fillStyle(bodyColor, 1); g.fillRect(8, 14, 16, 12);
-      g.fillStyle(0x000000, 1); g.fillRect(13, 6, 2, 2); g.fillRect(18, 6, 2, 2);
-      g.fillStyle(0x222222, 1); g.fillRect(10, 26, 4, 6); g.fillRect(18, 26, 4, 6);
-      g.fillStyle(0xcc3333, 1); g.fillRect(10, 1, 12, 4);
-      g.generateTexture(texKey, 32, 32); g.destroy();
+      g.fillStyle(0xf5d5b8, 1); g.fillCircle(24, 12, 9);
+      g.fillStyle(bodyColor, 1); g.fillRect(16, 20, 16, 14);
+      g.fillStyle(0x000000, 1); g.fillRect(20, 9, 2, 2); g.fillRect(26, 9, 2, 2);
+      g.fillStyle(0x222222, 1); g.fillRect(18, 34, 4, 6); g.fillRect(26, 34, 4, 6);
+      g.fillStyle(0xcc3333, 1); g.fillRect(16, 3, 16, 5);
+      g.generateTexture(texKey, 48, 48); g.destroy();
     }
 
+    // Physics sprite (invisible, world space)
     const sprite = this.physics.add.sprite(npc.x*T+T/2, npc.y*T+T/2, texKey)
-      .setDepth(5).setImmovable(true);
+      .setVisible(false).setImmovable(true);
     sprite.body.setSize(28, 28);
     sprite.setData('id', npc.id);
     sprite.setData('name', npc.name);
 
-    const label = this.add.text(npc.x*T+T/2, npc.y*T-8, npc.name, {
-      fontFamily: '"Playfair Display", serif', fontSize: '9px', color: '#c9a84c',
+    // Visual iso sprite
+    const { x: ix, y: iy } = tileToScreen(npc.x, npc.y, ox, oy);
+    const isoSprite = this.add.sprite(ix, iy, texKey)
+      .setDepth(isoDepth(npc.x, npc.y) + 0.4)
+      .setOrigin(0.5, 0.85);
+    this._npcIsoSprites[npc.id] = isoSprite;
+
+    // Label with background
+    const label = this.add.text(ix, iy - 10, '\u{1F610} ' + npc.name, {
+      fontFamily: '"Playfair Display", serif', fontSize: '9px', color: '#e8dcc8',
       stroke: '#0a0a0a', strokeThickness: 2
-    }).setOrigin(0.5).setDepth(10);
+    }).setOrigin(0.5).setDepth(isoDepth(npc.x, npc.y) + 10.1);
+    const bg = this.add.graphics().setDepth(isoDepth(npc.x, npc.y) + 10);
+    const pad = { x: 7, y: 3 };
+    bg.fillStyle(0x111111, 0.85);
+    bg.fillRoundedRect(-label.width / 2 - pad.x, -label.height / 2 - pad.y,
+      label.width + pad.x * 2, label.height + pad.y * 2, 6);
+    bg.setPosition(ix, iy - 10);
+    this._npcLabelBgs[npc.id] = bg;
     this.npcLabels[npc.id] = label;
 
-    this.tweens.add({
-      targets: sprite, scaleY:{from:1,to:1.03},
-      duration:2000, yoyo:true, repeat:-1, ease:'Sine.easeInOut'
-    });
     this.npcs[npc.id] = sprite;
 
     this.physics.add.collider(this.player, sprite);

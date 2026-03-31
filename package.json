@@ -1,6 +1,6 @@
 {
   "name": "detective-agentic-mysteries",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "type": "module",
   "license": "MIT",
   "description": "A 2D AI-powered detective game where every NPC is an independent AI agent. Built with Phaser 3, Express, and the GitHub Copilot SDK.",
@@ -15,6 +15,7 @@
     "@github/copilot-sdk": "^0.1.32",
     "cors": "^2.8.5",
     "express": "^4.21.0",
+    "playwright": "^1.58.2",
     "tsx": "^4.21.0"
   },
   "devDependencies": {

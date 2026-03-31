@@ -106,29 +106,29 @@ export const CRUISE_CONFIG = {
   ] as Evidence[],
 
   evidencePositions: {
-    // penthouse (x:27-32, y:3-8)
-    insulin_pen:          { x: 29, y: 5 },
-    prenup_document:      { x: 31, y: 7 },
-    // medical_bay (x:14-21, y:33-38)
-    potassium_vial:       { x: 16, y: 35 },
-    medical_bag:          { x: 20, y: 37 },
-    // security_office (x:27-32, y:33-38)
-    fake_credentials:     { x: 28, y: 34 },
-    deck7_footage:        { x: 31, y: 36 },
-    broken_camera_report: { x: 29, y: 38 },
-    // casino (x:27-32, y:14-17)
-    love_notes:           { x: 30, y: 15 },
-    // restaurant (x:14-21, y:23-28)
-    volkov_ledger:        { x: 17, y: 25 },
-    // library (x:3-8, y:14-17)
-    wells_meeting_note:   { x: 5, y: 16 },
-    // staff_quarters (x:3-8, y:33-38)
-    master_keycard_log:   { x: 4, y: 35 },
-    harassment_complaint: { x: 7, y: 37 },
-    // observation_deck (x:14-21, y:3-8)
-    yukis_photos:         { x: 18, y: 6 },
-    // kitchen (x:3-8, y:23-28)
-    romano_herb_list:     { x: 6, y: 26 },
+    // penthouse (x:22-31, y:17-22)
+    insulin_pen:          { x: 26, y: 19 },
+    prenup_document:      { x: 28, y: 19 },
+    // medical_bay (x:12-19, y:45-50)
+    potassium_vial:       { x: 15, y: 47 },
+    medical_bag:          { x: 18, y: 48 },
+    // security_office (x:20-27, y:45-50)
+    fake_credentials:     { x: 23, y: 47 },
+    deck7_footage:        { x: 25, y: 49 },
+    broken_camera_report: { x: 24, y: 48 },
+    // casino (x:6-17, y:31-36)
+    love_notes:           { x: 13, y: 34 },
+    // restaurant (x:22-33, y:31-36)
+    volkov_ledger:        { x: 27, y: 34 },
+    // library (x:8-17, y:17-22)
+    wells_meeting_note:   { x: 13, y: 19 },
+    // staff_quarters (x:9-16, y:45-50)
+    master_keycard_log:   { x: 11, y: 48 },
+    harassment_complaint: { x: 14, y: 49 },
+    // observation_deck (x:11-28, y:10-15)
+    yukis_photos:         { x: 22, y: 12 },
+    // kitchen (x:7-16, y:38-43)
+    romano_herb_list:     { x: 11, y: 41 },
   } as Record<string, { x: number; y: number }>,
 
   correctSuspect: "vasquez",
@@ -256,17 +256,17 @@ export const CRUISE_CONFIG = {
   } as Record<string, NPCSentiment>,
 
   initialNPCPositions: [
-    { id: "vasquez",    name: "Dr. Vasquez",      location: "medical_bay",      x: 18, y: 36 },
-    { id: "harrington", name: "Capt. Harrington", location: "bridge",           x: 5,  y: 5  },
-    { id: "isabelle",   name: "Isabelle Thorne",  location: "lounge",           x: 17, y: 15 },
-    { id: "volkov",     name: "Nikolai Volkov",   location: "restaurant",       x: 19, y: 26 },
-    { id: "diego",      name: "Diego Reyes",      location: "pool_deck",        x: 30, y: 25 },
-    { id: "lydia",      name: "Lydia Chen",       location: "casino",           x: 29, y: 16 },
-    { id: "wells",      name: "Congressman Wells", location: "library",         x: 6,  y: 15 },
-    { id: "sofia",      name: "Sofia Andersson",  location: "staff_quarters",   x: 5,  y: 36 },
-    { id: "romano",     name: "Chef Romano",      location: "kitchen",          x: 5,  y: 25 },
-    { id: "okafor",     name: "Chief Okafor",     location: "security_office",  x: 30, y: 35 },
-    { id: "yuki",       name: "Yuki Tanaka",      location: "observation_deck", x: 16, y: 5  },
+    { id: "vasquez",    name: "Dr. Vasquez",      location: "medical_bay",      x: 16, y: 47 },
+    { id: "harrington", name: "Capt. Harrington", location: "bridge",           x: 19, y: 5  },
+    { id: "isabelle",   name: "Isabelle Thorne",  location: "lounge",           x: 20, y: 26 },
+    { id: "volkov",     name: "Nikolai Volkov",   location: "restaurant",       x: 26, y: 33 },
+    { id: "diego",      name: "Diego Reyes",      location: "pool_deck",        x: 27, y: 41 },
+    { id: "lydia",      name: "Lydia Chen",       location: "casino",           x: 10, y: 33 },
+    { id: "wells",      name: "Congressman Wells", location: "library",         x: 12, y: 19 },
+    { id: "sofia",      name: "Sofia Andersson",  location: "staff_quarters",   x: 12, y: 47 },
+    { id: "romano",     name: "Chef Romano",      location: "kitchen",          x: 12, y: 40 },
+    { id: "okafor",     name: "Chief Okafor",     location: "security_office",  x: 24, y: 47 },
+    { id: "yuki",       name: "Yuki Tanaka",      location: "observation_deck", x: 20, y: 12 },
   ] as NPCSchedule[],
 
   winMessage:

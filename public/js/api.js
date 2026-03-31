@@ -130,15 +130,81 @@ export class GameAPI {
     return res.json();
   }
 
-  async advanceDay() {
+  async advanceDay(onConversation) {
     const res = await fetch(`${this.baseUrl}/api/day/advance`, { method: 'POST' });
+    // 409 = night already in progress (duplicate request) — treat as no-op
+    if (res.status === 409) {
+      console.warn('[API] Night transition already in progress, ignoring');
+      return { timeOfDay: 'night', conversations: [], duplicate: true };
+    }
     if (!res.ok) throw new Error(`Failed to advance day (${res.status})`);
+
+    const contentType = res.headers.get('content-type') || '';
+
+    // Night phase returns SSE stream with conversations
+    if (contentType.includes('text/event-stream')) {
+      return new Promise((resolve, reject) => {
+        const conversations = [];
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        function processChunk({ done, value }) {
+          if (done) {
+            // If we never got a 'done' event, return what we have
+            resolve({ timeOfDay: 'night', conversations });
+            return;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop(); // keep incomplete line in buffer
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const event = JSON.parse(line.slice(6));
+              if (event.type === 'conversation') {
+                conversations.push(event.conversation);
+                if (onConversation) onConversation(event.conversation);
+              } else if (event.type === 'status' && onConversation) {
+                // Status updates can be used for UI feedback
+              } else if (event.type === 'done') {
+                resolve({ ...event, conversations: event.conversations || conversations });
+                return;
+              }
+            } catch {}
+          }
+          reader.read().then(processChunk).catch(reject);
+        }
+
+        reader.read().then(processChunk).catch(reject);
+      });
+    }
+
+    // Day phase returns JSON normally
     return res.json();
   }
 
   async getEvidencePositions() {
     const res = await fetch(`${this.baseUrl}/api/evidence/positions`);
     if (!res.ok) throw new Error(`Failed to fetch positions (${res.status})`);
+    return res.json();
+  }
+
+  // ── Floor ───────────────────────────────────────────────────────
+  async getFloor() {
+    const res = await fetch(`${this.baseUrl}/api/floor`);
+    if (!res.ok) throw new Error(`Failed to fetch floor (${res.status})`);
+    return res.json();
+  }
+
+  async setFloor(floor) {
+    const res = await fetch(`${this.baseUrl}/api/floor`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ floor }),
+    });
+    if (!res.ok) throw new Error(`Failed to set floor (${res.status})`);
     return res.json();
   }
 
@@ -205,26 +271,19 @@ export class GameAPI {
   }
 
   // ── Mystery generation ─────────────────────────────────────────
-  async *generateMystery() {
-    const res = await fetch(`${this.baseUrl}/api/mystery/generate`, { method: 'POST' });
-    if (!res.ok) throw new Error(`Generation failed (${res.status})`);
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith('data:')) continue;
-        const payload = trimmed.slice(5).trim();
-        if (payload === '[DONE]') return;
-        try { yield JSON.parse(payload); } catch { yield { status: payload }; }
-      }
-    }
+  /** Kick off mystery generation. Keeps SSE connection alive in background for heartbeats. */
+  async startGeneration() {
+    // Don't await or cancel — let the SSE stream run in background
+    // The heartbeat writes keep the server session healthy
+    fetch(`${this.baseUrl}/api/mystery/generate`, { method: 'POST' })
+      .catch(() => {}); // ignore — we poll for results
+  }
+
+  /** Poll for generation events starting from afterIdx. */
+  async pollGeneration(afterIdx = 0) {
+    const res = await fetch(`${this.baseUrl}/api/mystery/generate/status?after=${afterIdx}`);
+    if (!res.ok) throw new Error(`Poll failed (${res.status})`);
+    return res.json();
   }
 
   async getMystery() {
@@ -243,6 +302,19 @@ export class GameAPI {
     const res = await fetch(`${this.baseUrl}/api/mystery/rooms`);
     if (!res.ok) throw new Error(`Failed (${res.status})`);
     return res.json();
+  }
+
+  // ── Director of Photography ────────────────────────────────────
+  async dpReview() {
+    const res = await fetch(`${this.baseUrl}/api/dp/review`, { method: 'POST' });
+    if (!res.ok) throw new Error(`DP review failed (${res.status})`);
+    return res.json();
+  }
+
+  async dpScreenshot() {
+    const res = await fetch(`${this.baseUrl}/api/dp/screenshot`);
+    if (!res.ok) throw new Error(`DP screenshot failed (${res.status})`);
+    return res.blob();
   }
 
   // ── Hidden Room ────────────────────────────────────────────────

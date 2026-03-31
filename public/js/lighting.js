@@ -22,8 +22,9 @@ const DEFAULTS = {
  * Stores all state on `scene._lighting`.
  */
 export function createLighting(scene, mapW, mapH, tileSize) {
-  const w = mapW * tileSize;
-  const h = mapH * tileSize;
+  // Use iso map bounds if available, otherwise classic tile math
+  const w = scene._isoMapW || (mapW * tileSize);
+  const h = scene._isoMapH || (mapH * tileSize);
 
   // Dark overlay rectangle
   const darkness = scene.add.rectangle(w / 2, h / 2, w, h, 0x0a0a1a, 1);
@@ -82,9 +83,10 @@ export function updateLighting(scene) {
 
   lt.darkness.setAlpha(lt.alpha);
 
-  // Redraw the mask circle at the player position
-  const px = scene.player.x;
-  const py = scene.player.y;
+  // Redraw the mask circle at the player position (use iso position if available)
+  const playerIso = scene._playerIso;
+  const px = playerIso ? playerIso.x : scene.player.x;
+  const py = playerIso ? playerIso.y : scene.player.y;
   const r = lt.radius;
 
   lt.maskGfx.clear();
@@ -135,7 +137,10 @@ function _updateEvidenceGlow(scene, px, py) {
   const range = DEFAULTS.evidenceGlowRange;
   for (const [, ev] of Object.entries(scene.evidenceItems || {})) {
     if (ev.collected || !ev.glow) continue;
-    const d = Phaser.Math.Distance.Between(px, py, ev.sprite.x, ev.sprite.y);
+    // Use iso positions if available for consistent distance calculation
+    const evX = ev.isoSprite ? ev.isoSprite.x : ev.glow.x;
+    const evY = ev.isoSprite ? ev.isoSprite.y : ev.glow.y;
+    const d = Phaser.Math.Distance.Between(px, py, evX, evY);
     if (d > range) {
       ev.glow.setVisible(false);
     } else {
