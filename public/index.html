@@ -125,6 +125,14 @@
           </div>
           <div class="gen-step-state">waiting</div>
         </div>
+        <div class="gen-step" id="gen-step-dp">
+          <div class="gen-step-icon">🎬</div>
+          <div class="gen-step-body">
+            <div class="gen-step-label">Dir. of Photography</div>
+            <div class="gen-step-desc">Visual QA — reviewing rendered textures</div>
+          </div>
+          <div class="gen-step-state">waiting</div>
+        </div>
       </div>
 
       <!-- Network graph view (hidden by default) -->
@@ -134,7 +142,8 @@
           <line class="gen-net-line" id="net-line-arch-char" x1="120" y1="80" x2="300" y2="80"/>
           <line class="gen-net-line" id="net-line-char-dir" x1="300" y1="80" x2="480" y2="80"/>
           <line class="gen-net-line" id="net-line-dir-creative" x1="480" y1="80" x2="300" y2="220"/>
-          <line class="gen-net-line" id="net-line-creative-world" x1="300" y1="220" x2="300" y2="360"/>
+          <line class="gen-net-line" id="net-line-creative-world" x1="300" y1="220" x2="200" y2="360"/>
+          <line class="gen-net-line" id="net-line-world-dp" x1="200" y1="360" x2="400" y2="360"/>
           <!-- Creative sub-lines -->
           <line class="gen-net-line gen-net-sub-line" id="net-line-cr-env" x1="300" y1="220" x2="140" y2="300"/>
           <line class="gen-net-line gen-net-sub-line" id="net-line-cr-props" x1="300" y1="220" x2="300" y2="300"/>
@@ -173,9 +182,14 @@
           <div class="gen-net-icon">👤</div>
           <div class="gen-net-label">Chars</div>
         </div>
-        <div class="gen-net-node" id="net-node-world" style="left:300px;top:360px">
+        <div class="gen-net-node" id="net-node-world" style="left:200px;top:360px">
           <div class="gen-net-icon">🗺️</div>
           <div class="gen-net-label">World</div>
+          <div class="gen-net-status"></div>
+        </div>
+        <div class="gen-net-node" id="net-node-dp" style="left:400px;top:360px">
+          <div class="gen-net-icon">🎬</div>
+          <div class="gen-net-label">DP</div>
           <div class="gen-net-status"></div>
         </div>
         <!-- Data flow labels (hidden by default, shown on events) -->
@@ -224,9 +238,14 @@
           <div class="arch-label">Skeleton Key</div>
         </div>
 
-        <div class="arch-node" id="arch-node-creative" style="left:640px;top:440px">
+        <div class="arch-node" id="arch-node-creative" style="left:610px;top:440px">
           <div class="arch-icon">🎨</div>
           <div class="arch-label">Creative Agency</div>
+        </div>
+
+        <div class="arch-node" id="arch-node-dp" style="left:610px;top:520px">
+          <div class="arch-icon">🎬</div>
+          <div class="arch-label">Dir. of Photography</div>
         </div>
 
         <!-- NPC agent nodes (populated dynamically as characters are generated) -->

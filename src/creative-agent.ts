@@ -27,7 +27,10 @@ export type DrawOp =
   | { op: 'arc';       color: string; x: number; y: number; r: number; start: number; end: number; width: number; alpha?: number }
   | { op: 'roundRect'; color: string; x: number; y: number; w: number; h: number; r: number; alpha?: number }
   | { op: 'diamond';   color: string; cx: number; cy: number; hw: number; hh: number; alpha?: number }
-  | { op: 'poly';      color: string; points: number[]; alpha?: number };
+  | { op: 'poly';      color: string; points: number[]; alpha?: number }
+  | { op: 'pixels';    color: string; pts: number[]; alpha?: number }
+  | { op: 'dither';    color: string; color2: string; x: number; y: number; w: number; h: number; density?: number; alpha?: number }
+  | { op: 'shade';     color: string; x: number; y: number; w: number; h: number; dir: 'down'|'up'|'left'|'right'; from: number; to: number };
 
 // ── Asset interfaces ─────────────────────────────────────────────
 
@@ -65,8 +68,8 @@ export interface NPCCostume {
 /** Setting-specific furniture piece. */
 export interface FurnitureDesign {
   name: string;         // e.g. "Wine Rack", "Lab Centrifuge"
-  width: number;        // 32-64
-  height: number;       // 32-64
+  width: number;        // 32-80
+  height: number;       // 32-90
   draw: DrawOp[];
 }
 
@@ -170,7 +173,7 @@ interface CreativePromptInput {
 }
 
 const PRIMITIVES_HELP = `=== DRAWING PRIMITIVES ===
-You have 10 drawing primitives on a pixel canvas. Coordinates are (0,0) at TOP-LEFT.
+You have 14 drawing primitives on a pixel canvas. Coordinates are (0,0) at TOP-LEFT.
   fill      — filled rect     {"op":"fill","color":"#hex","x":0,"y":0,"w":10,"h":10}
   circle    — filled circle   {"op":"circle","color":"#hex","x":5,"y":5,"r":4}
   line      — line segment    {"op":"line","color":"#hex","x1":0,"y1":0,"x2":10,"y2":10,"width":1}
@@ -179,14 +182,26 @@ You have 10 drawing primitives on a pixel canvas. Coordinates are (0,0) at TOP-L
   ellipse   — filled ellipse  {"op":"ellipse","color":"#hex","x":16,"y":16,"w":20,"h":12}
   arc       — stroked arc     {"op":"arc","color":"#hex","x":16,"y":16,"r":10,"start":0,"end":3.14,"width":2}
   roundRect — rounded rect    {"op":"roundRect","color":"#hex","x":2,"y":2,"w":28,"h":28,"r":4}
-  diamond   — isometric diamond {"op":"diamond","color":"#hex","cx":24,"cy":12,"hw":20,"hh":15}
+  diamond   — iso diamond     {"op":"diamond","color":"#hex","cx":24,"cy":12,"hw":20,"hh":15}
   poly      — filled polygon  {"op":"poly","color":"#hex","points":[x1,y1,x2,y2,...]}
+  pixels    — batch pixels    {"op":"pixels","color":"#hex","pts":[x1,y1,x2,y2,...]} (individual 1×1 dots)
+  dither    — checkerboard    {"op":"dither","color":"#c1","color2":"#c2","x":0,"y":0,"w":10,"h":10,"density":2}
+  shade     — gradient fill   {"op":"shade","color":"#hex","x":0,"y":0,"w":10,"h":10,"dir":"down","from":0.0,"to":0.5}
 All ops accept optional "alpha" (0.0-1.0). Arc angles in radians.
+
+TEXTURING TECHNIQUES (use these to add crafted pixel-art detail):
+- "dither" blends two colors in a checkerboard — great for wood grain, fabric, stone texture, shadows
+- "shade" draws a gradient (row by row) — use for lighting falloff, glass shine, metallic sheen
+- "pixels" plots individual dots — use for rivets, screws, specks, scattered detail, dithered edges
+- Layer multiple poly/tri with slightly different shades to create depth
+- Use lines at alpha 0.2-0.4 for wood grain, scratches, mortar lines
+- Use small circles at low alpha for wear marks, reflections, knobs
 
 === ISOMETRIC DESIGN RULES (CRITICAL — READ CAREFULLY) ===
 This game renders in ISOMETRIC 2.5D. Objects must look like 3D shapes viewed from above-right.
+1px dark outlines are automatically added around all shapes — you don't need to draw outlines.
 
-GOLDEN RULE: hw:hh ratio is ALWAYS 4:3 (e.g. hw=20,hh=15 or hw=12,hh=9 or hw=8,hh=6).
+GOLDEN RULE: hw:hh ratio is ALWAYS 4:3 (e.g. hw=32,hh=24 or hw=20,hh=15 or hw=12,hh=9 or hw=8,hh=6).
 
 THE ISO BOX — every piece of furniture/decoration is built from this pattern:
   Given: canvas width W, canvas height H, half-widths hw/hh, vertical depth d.
@@ -199,19 +214,53 @@ THE ISO BOX — every piece of furniture/decoration is built from this pattern:
     {"op":"poly","color":"MED","points":[cx+hw,baseY-d, cx,baseY-d+hh, cx,baseY+hh, cx+hw,baseY]}
   Step 3 — TOP FACE (lightest, flat surface):
     {"op":"diamond","color":"LIGHT","cx":cx,"cy":baseY-d,"hw":hw,"hh":hh}
-  Step 4+ — DETAILS drawn ON the faces (not floating in air):
-    Details on right face: use poly with x between cx and cx+hw, y between baseY-d+hh and baseY+hh
-    Details on left face: use poly with x between cx-hw and cx
-    Details on top: use smaller diamond/poly within the top diamond bounds
+  Step 4+ — DETAILS drawn ON the faces:
+    Face details: poly/tri/fill/dither/shade on the visible faces
+    Top details: smaller diamond/circle/ellipse within the top face bounds
+    Texture: dither or shade for wood grain, fabric, metal, etc.
+    Accents: pixels/line for rivets, scratches, wear marks
 
-=== WORKED EXAMPLE: A 48×54 DESK (hw=24, hh=18, depth=10) ===
-  Canvas: width=48, height=54. cx=24, baseY=54-18=36.
+STYLE GOAL: Charming, detailed pixel-art diorama. Think cozy isometric rooms with personality.
+Each piece should feel hand-crafted with texture, shading, and small details that reward close inspection.
+
+=== WORKED EXAMPLE: A DETAILED 64×72 DESK (hw=32, hh=24, depth=14) ===
+  Canvas: width=64, height=72. cx=32, baseY=72-24=48.
   [
-    {"op":"poly","color":"#3a2510","points":[0,26, 24,44, 24,54, 0,36]},
-    {"op":"poly","color":"#4a3218","points":[48,26, 24,44, 24,54, 48,36]},
-    {"op":"diamond","color":"#6b4423","cx":24,"cy":26,"hw":24,"hh":18},
-    {"op":"diamond","color":"#f5f0e0","cx":22,"cy":30,"hw":8,"hh":6,"alpha":0.9},
-    {"op":"poly","color":"#5a3a20","points":[26,44, 42,35, 42,40, 26,49]}
+    {"op":"poly","color":"#3a2510","points":[0,34, 32,58, 32,72, 0,48]},
+    {"op":"poly","color":"#4a3218","points":[64,34, 32,58, 32,72, 64,48]},
+    {"op":"diamond","color":"#6b4423","cx":32,"cy":34,"hw":32,"hh":24},
+    {"op":"dither","color":"#6b4423","color2":"#5a3818","x":12,"y":28,"w":40,"h":6,"density":2},
+    {"op":"shade","color":"#000000","x":1,"y":48,"w":30,"h":10,"dir":"down","from":0.0,"to":0.15},
+    {"op":"poly","color":"#5a3a20","points":[34,58, 56,44, 56,52, 34,66]},
+    {"op":"line","color":"#7a5a30","x1":35,"y1":60,"x2":54,"y2":48,"width":1,"alpha":0.3},
+    {"op":"diamond","color":"#f5f0e0","cx":20,"cy":38,"hw":10,"hh":7,"alpha":0.9},
+    {"op":"line","color":"#aaa088","x1":14,"y1":39,"x2":24,"y2":39,"width":1,"alpha":0.5},
+    {"op":"line","color":"#aaa088","x1":15,"y1":41,"x2":22,"y2":41,"width":1,"alpha":0.5},
+    {"op":"circle","color":"#1a1a1a","x":40,"y":36,"r":2},
+    {"op":"circle","color":"#333333","x":40,"y":35,"r":1,"alpha":0.8},
+    {"op":"pixels","color":"#8a6a3a","pts":[10,36, 50,32, 52,34, 14,40]}
+  ]
+
+=== WORKED EXAMPLE: A DETAILED 64×80 BOOKSHELF (hw=32, hh=24, depth=30) ===
+  Canvas: width=64, height=80. cx=32, baseY=80-24=56.
+  [
+    {"op":"poly","color":"#2a1a0a","points":[0,26, 32,50, 32,80, 0,56]},
+    {"op":"poly","color":"#3a2a15","points":[64,26, 32,50, 32,80, 64,56]},
+    {"op":"diamond","color":"#4a3018","cx":32,"cy":26,"hw":32,"hh":24},
+    {"op":"dither","color":"#2a1a0a","color2":"#221508","x":2,"y":50,"w":28,"h":16,"density":3},
+    {"op":"poly","color":"#8B0000","points":[34,54, 42,50, 42,56, 34,60]},
+    {"op":"poly","color":"#00008B","points":[43,49, 50,46, 50,52, 43,55]},
+    {"op":"poly","color":"#006400","points":[51,45, 58,42, 58,48, 51,51]},
+    {"op":"poly","color":"#4B0082","points":[34,61, 44,56, 44,62, 34,67]},
+    {"op":"poly","color":"#DAA520","points":[45,55, 54,51, 54,57, 45,61]},
+    {"op":"poly","color":"#800020","points":[55,50, 62,47, 62,53, 55,56]},
+    {"op":"line","color":"#3a2a15","x1":34,"y1":54,"x2":62,"y2":40,"width":1,"alpha":0.4},
+    {"op":"line","color":"#3a2a15","x1":34,"y1":62,"x2":62,"y2":48,"width":1,"alpha":0.4},
+    {"op":"poly","color":"#8B4513","points":[2,52, 28,52, 28,54, 2,54]},
+    {"op":"poly","color":"#00008B","points":[4,54, 10,54, 10,62, 4,62]},
+    {"op":"poly","color":"#8B0000","points":[11,54, 18,54, 18,60, 11,60]},
+    {"op":"poly","color":"#006400","points":[19,54, 26,54, 26,63, 19,63]},
+    {"op":"shade","color":"#000000","x":1,"y":56,"w":30,"h":12,"dir":"down","from":0.0,"to":0.2}
   ]
 
 === WORKED EXAMPLE: A 24×30 CRATE (hw=12, hh=9, depth=10) ===
@@ -220,8 +269,10 @@ THE ISO BOX — every piece of furniture/decoration is built from this pattern:
     {"op":"poly","color":"#2a1a0a","points":[0,11, 12,20, 12,30, 0,21]},
     {"op":"poly","color":"#3a2a15","points":[24,11, 12,20, 12,30, 24,21]},
     {"op":"diamond","color":"#5a3a1a","cx":12,"cy":11,"hw":12,"hh":9},
+    {"op":"dither","color":"#5a3a1a","color2":"#4a2e12","x":4,"y":8,"w":16,"h":5,"density":2},
     {"op":"line","color":"#7a5a2a","x1":13,"y1":23,"x2":21,"y2":18,"width":1},
-    {"op":"line","color":"#7a5a2a","x1":13,"y1":27,"x2":21,"y2":22,"width":1}
+    {"op":"line","color":"#7a5a2a","x1":13,"y1":27,"x2":21,"y2":22,"width":1},
+    {"op":"pixels","color":"#8a6a3a","pts":[14,20, 18,17, 16,25, 20,22]}
   ]
 
 === WORKED EXAMPLE: A 16×16 EVIDENCE SPRITE (a vial/bottle) ===
@@ -242,22 +293,19 @@ THE ISO BOX — every piece of furniture/decoration is built from this pattern:
     {"op":"line","color":"#555555","x1":4,"y1":11,"x2":9,"y2":11,"width":1}
   ]
 
-=== WORKED EXAMPLE: A 16×16 EVIDENCE SPRITE (a knife) ===
-  [
-    {"op":"tri","color":"#cccccc","x1":3,"y1":14,"x2":12,"y2":3,"x3":14,"y3":5},
-    {"op":"fill","color":"#8B4513","x":1,"y":12,"w":4,"h":3},
-    {"op":"line","color":"#ffffff","x1":5,"y1":12,"x2":13,"y2":3,"width":1,"alpha":0.4}
-  ]
-
 === QUICK-REFERENCE ISO BOX SIZES ===
   Small item:  W=24, H=30,  hw=12, hh=9,  depth=8-12.  cx=12, baseY=21
-  Medium item: W=40, H=44,  hw=20, hh=15, depth=4-12.  cx=20, baseY=29
-  Large item:  W=48, H=54,  hw=24, hh=18, depth=8-16.  cx=24, baseY=36
-  Tall item:   W=48, H=60,  hw=24, hh=18, depth=20-28. cx=24, baseY=42
+  Medium item: W=48, H=54,  hw=24, hh=18, depth=4-14.  cx=24, baseY=36
+  Large item:  W=64, H=72,  hw=32, hh=24, depth=10-20. cx=32, baseY=48
+  Tall item:   W=64, H=80,  hw=32, hh=24, depth=26-34. cx=32, baseY=56
+  XL item:     W=80, H=90,  hw=40, hh=30, depth=12-24. cx=40, baseY=60
 
 === COLOR RULES ===
 - LEFT face: darkest shade (shadow). RIGHT face: mid shade. TOP face: lightest (highlight).
+- Use 3-4 shades per material: base, dark, darker, and a highlight for edges/worn spots.
 - Darken: lower hex digits (e.g. #6b4423 → left #3a2510, right #4a3218).
+- Use "dither" to blend adjacent shades for a hand-crafted texture feel.
+- Use "shade" for subtle lighting gradients on large flat surfaces.
 - Evidence: use BRIGHT, saturated colors — items must pop against dark floors.
 - All colors MUST be 6-digit hex (#RRGGBB). Never 3-digit or named colors.
 
@@ -267,7 +315,8 @@ THE ISO BOX — every piece of furniture/decoration is built from this pattern:
 - DO NOT forget alpha on glass/liquid objects — use 0.3-0.7 for translucency.
 - DO NOT make evidence sprites too dark — they must be visible on dark floors.
 - DO NOT use hw:hh ratios other than 4:3 — it breaks isometric alignment.
-- ALWAYS draw faces in order: left poly, right poly, top diamond, then details.`;
+- ALWAYS draw faces in order: left poly, right poly, top diamond, then details.
+- ALWAYS add texture details (dither, lines, pixels) to make surfaces interesting — plain flat fills look lifeless.`;
 
 /**
  * Prompt 1 of 3: Environment atmosphere (wall tile, particles, room ambiance, weather).
@@ -327,39 +376,44 @@ ${PRIMITIVES_HELP}
 
 Output MINIFIED JSON (no extra whitespace) with ALL 3 sections:
 {
-  "decorations":[{"roomId":"id","items":[{"name":"N","width":48,"height":54,"draw":[...]}]}],
-  "furniture":[{"name":"N","width":48,"height":54,"draw":[...]}],
+  "decorations":[{"roomId":"id","items":[{"name":"N","width":64,"height":72,"draw":[...]}]}],
+  "furniture":[{"name":"N","width":64,"height":72,"draw":[...]}],
   "ambientProps":[{"name":"N","width":12,"height":12,"count":4,"draw":[...]}]
 }
 
 CRITICAL — YOUR FIRST FURNITURE ITEM MUST BE EXACTLY THIS (copy it verbatim to prove you understand the draw format, then generate your own unique items after it):
-{"name":"Table","width":40,"height":44,"draw":[{"op":"poly","color":"#3a2510","points":[0,25,20,40,20,44,0,29]},{"op":"poly","color":"#4a3218","points":[40,25,20,40,20,44,40,29]},{"op":"diamond","color":"#6b4423","cx":20,"cy":25,"hw":20,"hh":15},{"op":"diamond","color":"#f5f0e0","cx":18,"cy":29,"hw":6,"hh":4,"alpha":0.8}]}
+{"name":"Table","width":64,"height":72,"draw":[{"op":"poly","color":"#3a2510","points":[0,34,32,58,32,72,0,48]},{"op":"poly","color":"#4a3218","points":[64,34,32,58,32,72,64,48]},{"op":"diamond","color":"#6b4423","cx":32,"cy":34,"hw":32,"hh":24},{"op":"dither","color":"#6b4423","color2":"#5a3818","x":12,"y":28,"w":40,"h":6,"density":2},{"op":"diamond","color":"#f5f0e0","cx":24,"cy":38,"hw":8,"hh":6,"alpha":0.9}]}
 
 RULES:
 - ALL decorations and furniture MUST be drawn as ISOMETRIC 3D BOXES — follow the iso box pattern from the design rules above.
-  MANDATORY DRAW ORDER: 1) left poly (darkest), 2) right poly (medium), 3) top diamond (lightest), 4) detail ops.
-  Use the QUICK-REFERENCE SIZES from the design rules to compute exact coordinates:
+  MANDATORY DRAW ORDER: 1) left poly (darkest), 2) right poly (medium), 3) top diamond (lightest), 4) texture ops (dither/shade), 5) detail ops.
+  Use the QUICK-REFERENCE SIZES — prefer LARGE (64×72) and MEDIUM (48×54) for rich detail:
     Small:  width=24, height=30,  hw=12, hh=9,  cx=12, baseY=21
-    Medium: width=40, height=44,  hw=20, hh=15, cx=20, baseY=29
-    Large:  width=48, height=54,  hw=24, hh=18, cx=24, baseY=36
+    Medium: width=48, height=54,  hw=24, hh=18, cx=24, baseY=36
+    Large:  width=64, height=72,  hw=32, hh=24, cx=32, baseY=48
+    Tall:   width=64, height=80,  hw=32, hh=24, cx=32, baseY=56
 
-- Decorations: 3-5 per room (for ALL ${roomCount} rooms). Use small or medium size. 6-12 draw ops each:
+- Decorations: 3-5 per room (for ALL ${roomCount} rooms). Use medium or large size. 12-25 draw ops each:
   * Think about what SPECIFIC objects belong in each room based on purpose AND setting
   * A winery cellar gets barrel iso-boxes, a ship bridge gets console iso-boxes
   * Include both large statement pieces AND smaller accent items per room
-  * Add wall-mounted or ceiling items (lamps, signs, clocks, mounted equipment) as smaller sprites
-  * Each item must look like a recognisable 3D object from the isometric viewpoint
-  * roomId MUST exactly match the room IDs listed above.
+  * ADD TEXTURE: use dither for wood/stone/metal surfaces, shade for lighting, pixels for wear/details
+  * Add wall-mounted or ceiling items (lamps, signs, clocks) as smaller sprites
+  * Each item must look like a recognisable 3D object with rich pixel-art detail
+  * roomId MUST exactly match the room IDs listed above
   * EVERY room must have decorations — no empty rooms!
 
-- Furniture: 10-15 setting-specific pieces. Use medium (40×44) or large (48×54) size. 8-14 draw ops each:
-  * EVERY piece starts with the 3 iso box ops (left poly, right poly, top diamond) then adds details
+- Furniture: 10-15 setting-specific pieces. Use large (64×72) or tall (64×80) size. 15-30 draw ops each:
+  * EVERY piece starts with the 3 iso box ops (left poly, right poly, top diamond)
+  * THEN add texture: dither on faces for wood grain/fabric/metal, shade for light falloff
+  * THEN add details: smaller poly/diamond/circle for drawers, knobs, items on top, cushions
+  * THEN add accents: pixels for rivets/screws, lines for scratches/seams at low alpha
   * Include at least 3 seating items, 3 surface/storage items, AND 2 unique statement pieces
-  * Vary sizes: use the small/medium/large presets above
   * Think about the SETTING: what furniture would ACTUALLY be in this place?
+  * Make each piece feel like a miniature hand-crafted pixel-art model
 
-- Ambient props: 6-10 types. 8-16px each. 2-5 draw ops. count 2-8 each. Small scattered details (can be flat — they're tiny):
-  * Floor debris matching the setting (sawdust, broken glass, flower petals, coffee rings, wire, paper scraps)
+- Ambient props: 6-10 types. 8-16px each. 2-6 draw ops. count 2-8 each. Small scattered details (flat is fine):
+  * Floor debris matching the setting (sawdust, broken glass, flower petals, coffee rings)
   * Stains or marks (scorch marks, water puddles, oil drips, chalk marks)
   * Tiny objects (keys, coins, matchbooks, bottle caps, pens, cigarette butts)
   * Make them varied and setting-specific — they bring the world to life
@@ -412,8 +466,8 @@ RULES:
   * Use BRIGHT, saturated colors (#88ccff, #ff6666, #f5f0d0, #66ff66) so items pop against dark floors.
   * Create recognisable silhouettes: vial shape, folded letter, knife blade, syringe, torn photo, key, ring, etc.
   * 3-6 draw ops per item. All coords must be within 0-16. evidenceId MUST exactly match IDs above.
-- NPC costumes: overlay on 32×32 body (body at cx=16 cy=16, rect (10,14)→(22,28), head (11,6)→(21,15)). Add hats, badges, scarves, aprons, glasses, jewelry, uniforms — make each character visually unique and memorable. 2-5 draw ops. characterId MUST match.
-- Portraits: 64×64 head+shoulders for EVERY character. Include face shape (ellipse), eyes (circles), hair, distinguishing features (glasses, beard, scar, hat, earrings), clothing neckline. Use the character's role to inform their appearance. 6-15 draw ops each for rich detail. characterId MUST match.
+- NPC costumes: overlay on 32×32 body (body at cx=16 cy=16, rect (10,14)→(22,28), head (11,6)→(21,15)). Add hats, badges, scarves, aprons, glasses, jewelry, uniforms — make each character visually unique and memorable. 3-8 draw ops. characterId MUST match.
+- Portraits: 64×64 head+shoulders for EVERY character. Include face shape (ellipse), eyes (circles), hair, distinguishing features (glasses, beard, scar, hat, earrings), clothing neckline. Use the character's role to inform their appearance. Use dither for skin texture, shade for lighting. 10-20 draw ops each for rich detail. characterId MUST match.
 - Crime scene: body outline 48×64 (use lines for limbs + circle for head), 1-2 scene markers 16×16 (blood, chemical spill, scorch marks — whatever fits the specific crime), barrier 64×8. Make them visceral and setting-appropriate.
 - All colors: 6-digit hex. Use alpha for layered translucent effects. Output ONLY minified JSON.`;
 }
@@ -465,13 +519,13 @@ export function getDefaultCreativeAssets(rooms: { id: string; name: string }[], 
     },
     furniture: [{
       name: 'Generic Table',
-      width: 40, height: 44,
+      width: 64, height: 72,
       draw: [
-        { op: 'fill' as const, color: '#3a2510', x: 6, y: 31, w: 2, h: 10 },
-        { op: 'fill' as const, color: '#3a2510', x: 32, y: 27, w: 2, h: 10 },
-        { op: 'poly' as const, color: '#3a2510', points: [0, 25, 20, 40, 20, 44, 0, 29] },
-        { op: 'poly' as const, color: '#4a3218', points: [40, 25, 20, 40, 20, 44, 40, 29] },
-        { op: 'diamond' as const, color: '#6b4423', cx: 20, cy: 25, hw: 20, hh: 15 },
+        { op: 'poly' as const, color: '#3a2510', points: [0, 34, 32, 58, 32, 72, 0, 48] },
+        { op: 'poly' as const, color: '#4a3218', points: [64, 34, 32, 58, 32, 72, 64, 48] },
+        { op: 'diamond' as const, color: '#6b4423', cx: 32, cy: 34, hw: 32, hh: 24 },
+        { op: 'dither' as const, color: '#6b4423', color2: '#5a3818', x: 12, y: 28, w: 40, h: 6, density: 2 },
+        { op: 'diamond' as const, color: '#f5f0e0', cx: 24, cy: 38, hw: 8, hh: 6, alpha: 0.9 },
       ],
     }],
     evidenceSprites: (evidence || []).map(e => ({

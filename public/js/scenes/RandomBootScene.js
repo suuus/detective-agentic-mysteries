@@ -47,6 +47,66 @@ export default class RandomBootScene extends Phaser.Scene {
     g.destroy();
   }
 
+  /**
+   * Generate a texture with a 1px dark outline pass applied afterward.
+   * Reads the rendered pixels, detects edges of filled regions, and
+   * draws dark outline pixels around them for a crisp pixel-art look.
+   */
+  _texOutlined(key, w, h, fn) {
+    // First pass: render normally
+    const g = this.make.graphics({ add: false });
+    fn(g, w, h);
+    g.generateTexture('__outline_tmp', w, h);
+    g.destroy();
+
+    // Read pixels from the rendered texture
+    const src = this.textures.get('__outline_tmp').getSourceImage();
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(src, 0, 0);
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const d = imgData.data;
+
+    // Find edge pixels: any transparent pixel adjacent to a filled pixel
+    const outlinePixels = [];
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        if (d[i + 3] > 20) continue; // already filled
+        // Check 4 neighbors
+        const neighbors = [
+          [x-1, y], [x+1, y], [x, y-1], [x, y+1]
+        ];
+        for (const [nx, ny] of neighbors) {
+          if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+            const ni = (ny * w + nx) * 4;
+            if (d[ni + 3] > 60) {
+              outlinePixels.push([x, y]);
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // Draw outline pixels on a new graphics object
+    const g2 = this.make.graphics({ add: false });
+    // Redraw base
+    g2.fillStyle(0x000000, 0); g2.fillRect(0, 0, w, h);
+    const baseImg = this.textures.get('__outline_tmp').getSourceImage();
+    // We can't drawImage on Phaser Graphics, so re-render the fn
+    fn(g2, w, h);
+    // Draw outline
+    g2.fillStyle(0x111111, 0.6);
+    for (const [ox, oy] of outlinePixels) g2.fillRect(ox, oy, 1, 1);
+    g2.generateTexture(key, w, h);
+    g2.destroy();
+
+    // Clean up temp texture
+    this.textures.remove('__outline_tmp');
+  }
+
   /** Execute an array of drawing instructions on a Phaser Graphics object. */
   _execDraw(g, ops) {
     if (!Array.isArray(ops)) return;
@@ -100,8 +160,92 @@ export default class RandomBootScene extends Phaser.Scene {
           }
           break;
         }
+        case 'pixels': {
+          // Batch-plot individual pixels: {"op":"pixels","color":"#hex","pts":[x1,y1,x2,y2,...]}
+          const pxPts = op.pts;
+          if (Array.isArray(pxPts) && pxPts.length >= 2) {
+            g.fillStyle(c, a);
+            for (let pi = 0; pi < pxPts.length; pi += 2) g.fillRect(pxPts[pi], pxPts[pi+1], 1, 1);
+          }
+          break;
+        }
+        case 'dither': {
+          // Checkerboard dither between two colors: {"op":"dither","color":"#c1","color2":"#c2","x":0,"y":0,"w":10,"h":10,"density":2}
+          const c2 = this._hex(op.color2 || op.color);
+          const density = op.density || 2;
+          for (let dy = 0; dy < (op.h || 0); dy++) {
+            for (let dx = 0; dx < (op.w || 0); dx++) {
+              if ((dx + dy) % density === 0) {
+                g.fillStyle(c, a); g.fillRect(op.x + dx, op.y + dy, 1, 1);
+              } else {
+                g.fillStyle(c2, a); g.fillRect(op.x + dx, op.y + dy, 1, 1);
+              }
+            }
+          }
+          break;
+        }
+        case 'shade': {
+          // Gradient-like directional shading: {"op":"shade","color":"#hex","x":0,"y":0,"w":10,"h":10,"dir":"down","from":0.0,"to":0.5}
+          const dir = op.dir || 'down';
+          const fromA = typeof op.from === 'number' ? op.from : 0;
+          const toA = typeof op.to === 'number' ? op.to : 0.5;
+          const sw = op.w || 1, sh = op.h || 1;
+          const steps = (dir === 'down' || dir === 'up') ? sh : sw;
+          for (let s = 0; s < steps; s++) {
+            const t = steps > 1 ? s / (steps - 1) : 0;
+            const sa = fromA + (toA - fromA) * t;
+            g.fillStyle(c, sa);
+            if (dir === 'down') g.fillRect(op.x, op.y + s, sw, 1);
+            else if (dir === 'up') g.fillRect(op.x, op.y + sh - 1 - s, sw, 1);
+            else if (dir === 'right') g.fillRect(op.x + s, op.y, 1, sh);
+            else g.fillRect(op.x + sw - 1 - s, op.y, 1, sh);
+          }
+          break;
+        }
       }
     }
+  }
+
+  /**
+   * Check if draw ops form a proper isometric 3D shape (has poly faces + diamond/poly top).
+   * Items that lack this structure will look like flat diamonds on the iso grid.
+   */
+  _hasIsoStructure(ops) {
+    if (!Array.isArray(ops) || ops.length < 3) return false;
+    const polyCount = ops.filter(o => o.op === 'poly').length;
+    const hasDiamond = ops.some(o => o.op === 'diamond');
+    // A proper iso box has at least 2 poly faces (left + right) + a top (diamond or 3rd poly)
+    return polyCount >= 2 && (hasDiamond || polyCount >= 3);
+  }
+
+  /**
+   * Auto-generate iso box face ops to prepend to flat AI draw ops.
+   * Extracts the dominant color from existing ops and builds left/right/top faces.
+   */
+  _makeIsoBoxOps(w, h, ops) {
+    // Extract dominant color from existing ops
+    let dominantColor = '#666666';
+    for (const op of ops) {
+      if (op.color && op.color !== '#666666') { dominantColor = op.color; break; }
+    }
+    const dc = parseInt(dominantColor.replace('#', ''), 16) || 0x666666;
+    const dk = (c, f) => {
+      const r = Math.floor(((c >> 16) & 0xff) * f);
+      const g = Math.floor(((c >> 8) & 0xff) * f);
+      const b = Math.floor((c & 0xff) * f);
+      return '#' + ((r << 16) | (g << 8) | b).toString(16).padStart(6, '0');
+    };
+    // Compute iso box dimensions from canvas size
+    const hw = Math.floor(w / 2), hh = Math.floor(hw * 0.75);
+    const cx = Math.floor(w / 2);
+    const depth = Math.max(4, h - 2 * hh);
+    const baseY = h - hh;
+    const topY = baseY - depth;
+    return [
+      { op: 'poly', color: dk(dc, 0.45), points: [cx - hw, topY, cx, topY + hh, cx, baseY + hh, cx - hw, baseY] },
+      { op: 'poly', color: dk(dc, 0.7), points: [cx + hw, topY, cx, topY + hh, cx, baseY + hh, cx + hw, baseY] },
+      { op: 'diamond', color: dominantColor, cx: cx, cy: topY, hw: hw, hh: hh },
+    ];
   }
 
   /** Validate and repair AI-generated draw ops. Clamps coordinates to canvas, fixes colors. */
@@ -162,6 +306,29 @@ export default class RandomBootScene extends Phaser.Scene {
         for (const k of ['x1','y1','x2','y2']) {
           if (typeof op[k] !== 'number') return false;
         }
+      }
+      // Validate new primitives
+      if (op.op === 'pixels') {
+        if (!Array.isArray(op.pts) || op.pts.length < 2) return false;
+        for (let i = 0; i < op.pts.length; i++) {
+          if (typeof op.pts[i] !== 'number') return false;
+        }
+      }
+      if (op.op === 'dither') {
+        if (typeof op.x !== 'number') op.x = 0;
+        if (typeof op.y !== 'number') op.y = 0;
+        if (typeof op.w !== 'number' || typeof op.h !== 'number') return false;
+        // Fix color2 same as color
+        if (typeof op.color2 === 'number') op.color2 = '#' + op.color2.toString(16).padStart(6, '0');
+        else if (typeof op.color2 !== 'string' || !op.color2.match(/^#[0-9a-fA-F]{6}$/)) op.color2 = op.color;
+        // Cap dither area to prevent performance issues
+        if (op.w * op.h > 4000) { op.w = Math.min(op.w, 60); op.h = Math.min(op.h, 60); }
+      }
+      if (op.op === 'shade') {
+        if (typeof op.x !== 'number') op.x = 0;
+        if (typeof op.y !== 'number') op.y = 0;
+        if (typeof op.w !== 'number' || typeof op.h !== 'number') return false;
+        if (op.w * op.h > 4000) { op.w = Math.min(op.w, 60); op.h = Math.min(op.h, 60); }
       }
       return true;
     });
@@ -378,65 +545,143 @@ export default class RandomBootScene extends Phaser.Scene {
       g.closePath(); g.fillPath();
     };
 
-    // Table — hw=20, hh=15, depth=4
-    this._tex('furn_table', 40, 44, g => {
-      const hw=20, hh=15, depth=4, cx=20, baseY=44-hh;
-      g.fillStyle(dk(p.pri,0.45));
-      g.fillRect(cx-hw+4, baseY+2, 2, 10);
-      g.fillRect(cx+hw-6, baseY, 2, 10);
-      g.fillRect(cx-1, baseY+hh-2, 2, 10);
-      isoBox(g, cx, baseY, hw, hh, depth, p.sec, dk(p.pri,0.55), dk(p.pri,0.75));
-    });
-    // Desk — hw=24, hh=18, depth=10
-    this._tex('furn_desk', 48, 54, g => {
-      const hw=24, hh=18, depth=10, cx=24, baseY=54-hh;
+    // Table — hw=32, hh=24, depth=6 (large iso table with wood grain)
+    this._texOutlined('furn_table', 64, 72, g => {
+      const hw=32, hh=24, depth=6, cx=32, baseY=72-hh;
+      // Legs (drawn behind)
       g.fillStyle(dk(p.pri,0.4));
-      g.fillRect(cx-hw+2, baseY+2, 2, 8); g.fillRect(cx+hw-4, baseY-6, 2, 8);
-      const { topY, diamondY } = isoBox(g, cx, baseY, hw, hh, depth, p.pri, dk(p.pri,0.55), dk(p.pri,0.75));
-      topDiamond(g, cx-2, topY+4, 8, 6, 0xf5f0e0, 0.9);
-      const rFaceTop = topY + hh;
-      rightFaceRect(g, cx+2, rFaceTop+2, 14, 3, p.sec);
+      g.fillRect(cx-hw+6, baseY+4, 2, 14);
+      g.fillRect(cx+hw-8, baseY+2, 2, 14);
+      g.fillRect(cx-1, baseY+hh-2, 2, 14);
+      // Box
+      isoBox(g, cx, baseY, hw, hh, depth, p.sec, dk(p.pri,0.5), dk(p.pri,0.7));
+      // Wood grain dither on top face
+      g.fillStyle(dk(p.sec, 0.9), 0.3);
+      for (let dy = -6; dy <= 6; dy += 3) {
+        const row = baseY - depth + dy;
+        for (let dx = -hw+8; dx < hw-8; dx += 2) {
+          if ((dx + dy) % 4 === 0) g.fillRect(cx + dx, row, 1, 1);
+        }
+      }
+      // Napkin on top
+      topDiamond(g, cx+8, baseY-depth+6, 6, 4, 0xf5f0e0, 0.85);
     });
-    // Bookshelf — hw=24, hh=18, depth=24
-    this._tex('furn_bookshelf', 48, 60, g => {
-      const hw=24, hh=18, depth=24, cx=24, baseY=60-hh;
-      const { topY } = isoBox(g, cx, baseY, hw, hh, depth, p.acc, dk(p.acc,0.45), dk(p.acc,0.65));
+    // Desk — hw=32, hh=24, depth=14 (large desk with drawer + papers)
+    this._texOutlined('furn_desk', 64, 72, g => {
+      const hw=32, hh=24, depth=14, cx=32, baseY=72-hh;
+      // Legs
+      g.fillStyle(dk(p.pri,0.35));
+      g.fillRect(cx-hw+3, baseY+4, 2, 10); g.fillRect(cx+hw-5, baseY-2, 2, 10);
+      // Box
+      const { topY } = isoBox(g, cx, baseY, hw, hh, depth, p.pri, dk(p.pri,0.5), dk(p.pri,0.7));
+      // Dither on top
+      for (let dy = -8; dy <= 8; dy += 2) {
+        for (let dx = -20; dx < 20; dx += 2) {
+          if ((dx + dy) % 4 === 0) { g.fillStyle(dk(p.pri,0.85), 0.2); g.fillRect(cx+dx, topY+dy, 1, 1); }
+        }
+      }
+      // Papers on top
+      topDiamond(g, cx-6, topY+6, 10, 7, 0xf5f0e0, 0.9);
+      g.fillStyle(0x888877, 0.5); // text lines
+      g.fillRect(cx-12, topY+5, 6, 1); g.fillRect(cx-10, topY+7, 4, 1);
+      // Inkwell
+      g.fillStyle(0x1a1a1a); g.fillCircle(cx+12, topY+4, 3);
+      g.fillStyle(0x2a2a3a); g.fillCircle(cx+12, topY+3, 2);
+      // Right-face drawer
+      const rFaceTop = topY + hh;
+      rightFaceRect(g, cx+2, rFaceTop+3, 18, 5, p.sec);
+      rightFaceRect(g, cx+2, rFaceTop+4, 18, 3, dk(p.sec, 0.85));
+      // Drawer knob
+      g.fillStyle(dk(p.acc, 0.9)); g.fillCircle(cx+12, rFaceTop+6, 1);
+      // Shadow under desk
+      g.fillStyle(0x000000, 0.08);
+      for (let sy = 0; sy < 8; sy++) g.fillRect(cx-hw+4, baseY+hh+sy, hw*2-8, 1);
+    });
+    // Bookshelf — hw=32, hh=24, depth=28 (tall, with colorful book spines)
+    this._texOutlined('furn_bookshelf', 64, 80, g => {
+      const hw=32, hh=24, depth=28, cx=32, baseY=80-hh;
+      const { topY } = isoBox(g, cx, baseY, hw, hh, depth, p.acc, dk(p.acc,0.4), dk(p.acc,0.6));
       const rFaceTop = topY + hh;
       const lFaceTop = topY + hh;
-      const cols = [0x8B0000,0x00008B,0x006400,0x4B0082,0x800020,0xDAA520];
-      for (let row = 0; row < 3; row++) {
-        rightFaceRect(g, cx+2, rFaceTop + (row+1)*6, hw-4, 1, dk(p.acc,0.3));
-        leftFaceRect(g, cx-2, lFaceTop + (row+1)*6, hw-4, 1, dk(p.acc,0.3));
-        for (let i = 0; i < 3; i++) {
-          rightFaceRect(g, cx+2+i*6, rFaceTop+1+row*6, 5, 4, cols[(row*3+i) % cols.length]);
-          leftFaceRect(g, cx-2-i*6, lFaceTop+1+row*6, 5, 4, cols[(row*3+i+3) % cols.length]);
+      // Dither on left face for wood texture
+      for (let dy = 0; dy < 20; dy++) {
+        for (let dx = 2; dx < 28; dx += 2) {
+          if ((dx + dy) % 5 === 0) { g.fillStyle(dk(p.acc,0.35), 0.2); g.fillRect(cx-hw+dx, lFaceTop+dy, 1, 1); }
+        }
+      }
+      // Book rows
+      const cols = [0x8B0000,0x00008B,0x006400,0x4B0082,0x800020,0xDAA520,0x2F4F4F,0xB22222];
+      for (let row = 0; row < 4; row++) {
+        // Shelf line
+        rightFaceRect(g, cx+2, rFaceTop + (row+1)*6, hw-6, 1, dk(p.acc,0.3));
+        leftFaceRect(g, cx-2, lFaceTop + (row+1)*6, hw-6, 1, dk(p.acc,0.3));
+        // Books on right face
+        for (let i = 0; i < 4; i++) {
+          const bw = 3 + Math.floor(Math.random() * 3);
+          rightFaceRect(g, cx+2+i*6, rFaceTop+1+row*6, bw, 4, cols[(row*4+i) % cols.length]);
+        }
+        // Books on left face
+        for (let i = 0; i < 4; i++) {
+          const bw = 3 + Math.floor(Math.random() * 3);
+          leftFaceRect(g, cx-2-i*6, lFaceTop+1+row*6, bw, 4, cols[(row*4+i+4) % cols.length]);
         }
       }
     });
-    // Plant — hw=8, hh=6, depth=8
-    this._tex('furn_plant', 16, 36, g => {
+    // Plant — hw=8, hh=6, depth=8 (potted plant with layered foliage)
+    this._texOutlined('furn_plant', 16, 36, g => {
       const hw=8, hh=6, depth=8, cx=8, baseY=36-hh;
-      isoBox(g, cx, baseY, hw, hh, depth, p.pri, dk(p.pri,0.6), dk(p.pri,0.8));
-      g.fillStyle(0x1a6a1a); g.fillCircle(cx, 12, 8);
-      g.fillStyle(0x228B22); g.fillCircle(cx-3, 9, 5);
-      g.fillStyle(0x2a9a2a); g.fillCircle(cx+3, 8, 4);
+      isoBox(g, cx, baseY, hw, hh, depth, 0x6b4423, dk(0x6b4423,0.5), dk(0x6b4423,0.7));
+      // Soil on top
+      g.fillStyle(0x3a2a1a); g.fillCircle(cx, baseY-depth, 4);
+      // Stem
+      g.fillStyle(0x2a6a1a); g.fillRect(cx-1, 6, 2, 14);
+      // Leaves (layered circles for volume)
+      g.fillStyle(0x1a5a1a); g.fillCircle(cx, 10, 7);
+      g.fillStyle(0x228B22); g.fillCircle(cx-3, 8, 5);
+      g.fillStyle(0x2a9a2a); g.fillCircle(cx+3, 7, 4);
+      g.fillStyle(0x3aaa3a); g.fillCircle(cx-1, 5, 3);
+      // Highlight dots
+      g.fillStyle(0x60d060, 0.4);
+      g.fillRect(cx-4, 6, 1, 1); g.fillRect(cx+2, 8, 1, 1); g.fillRect(cx, 4, 1, 1);
     });
-    // Crate — hw=12, hh=9, depth=10
-    this._tex('furn_crate', 24, 30, g => {
+    // Crate — hw=12, hh=9, depth=10 (with wood texture)
+    this._texOutlined('furn_crate', 24, 30, g => {
       const hw=12, hh=9, depth=10, cx=12, baseY=30-hh;
-      const { topY } = isoBox(g, cx, baseY, hw, hh, depth, p.pri, dk(p.pri,0.5), dk(p.pri,0.7));
+      const { topY } = isoBox(g, cx, baseY, hw, hh, depth, p.pri, dk(p.pri,0.45), dk(p.pri,0.65));
+      // Dither on top for wood grain
+      for (let dy = -3; dy <= 3; dy++) {
+        for (let dx = -8; dx < 8; dx += 2) {
+          if ((dx + dy) % 3 === 0) { g.fillStyle(dk(p.pri,0.85), 0.3); g.fillRect(cx+dx, topY+dy, 1, 1); }
+        }
+      }
       const rFaceTop = topY + hh;
       rightFaceRect(g, cx+1, rFaceTop+1, 8, 1, dk(p.acc,0.8));
       rightFaceRect(g, cx+1, rFaceTop+5, 8, 1, dk(p.acc,0.8));
+      // Nail dots
+      g.fillStyle(0x999999); g.fillRect(cx+2, rFaceTop+2, 1, 1); g.fillRect(cx+8, rFaceTop+3, 1, 1);
     });
-    // Cabinet — hw=20, hh=15, depth=16
-    this._tex('furn_cabinet', 40, 46, g => {
-      const hw=20, hh=15, depth=16, cx=20, baseY=46-hh;
-      const { topY } = isoBox(g, cx, baseY, hw, hh, depth, p.pri, dk(p.pri,0.5), dk(p.pri,0.7));
+    // Cabinet — hw=24, hh=18, depth=18 (with door panels and knobs)
+    this._texOutlined('furn_cabinet', 48, 54, g => {
+      const hw=24, hh=18, depth=18, cx=24, baseY=54-hh;
+      const { topY } = isoBox(g, cx, baseY, hw, hh, depth, p.pri, dk(p.pri,0.45), dk(p.pri,0.65));
+      // Top surface dither
+      for (let dy = -6; dy <= 6; dy++) {
+        for (let dx = -16; dx < 16; dx += 2) {
+          if ((dx + dy) % 4 === 0) { g.fillStyle(dk(p.pri,0.85), 0.2); g.fillRect(cx+dx, topY+dy, 1, 1); }
+        }
+      }
       const rFaceTop = topY + hh;
-      rightFaceRect(g, cx+2, rFaceTop+2, 7, 10, p.sec);
-      rightFaceRect(g, cx+10, rFaceTop+1, 7, 10, p.sec);
-      g.fillStyle(p.acc); g.fillCircle(cx+8, rFaceTop+7, 1); g.fillCircle(cx+16, rFaceTop+5, 1);
+      // Two door panels
+      rightFaceRect(g, cx+2, rFaceTop+2, 9, 13, dk(p.sec, 0.9));
+      rightFaceRect(g, cx+12, rFaceTop+1, 9, 13, dk(p.sec, 0.9));
+      // Inner panel detail
+      rightFaceRect(g, cx+3, rFaceTop+4, 7, 9, p.sec);
+      rightFaceRect(g, cx+13, rFaceTop+3, 7, 9, p.sec);
+      // Knobs
+      g.fillStyle(0xc9a84c); g.fillCircle(cx+10, rFaceTop+9, 1); g.fillCircle(cx+20, rFaceTop+7, 1);
+      // Shadow
+      g.fillStyle(0x000000, 0.06);
+      for (let sy = 0; sy < 4; sy++) g.fillRect(cx-hw+2, baseY+hh+sy, hw*2-4, 1);
     });
 
     // AI-designed setting-specific furniture
@@ -445,16 +690,24 @@ export default class RandomBootScene extends Phaser.Scene {
       let validCount = 0;
       ca.furniture.forEach((furn, i) => {
         if (!furn?.draw?.length) return;
-        const w = Math.min(Math.max(furn.width || 48, 16), 64);
-        const h = Math.min(Math.max(furn.height || 48, 16), 72);
-        const validated = this._validateDrawOps(furn.draw, w, h);
+        const w = Math.min(Math.max(furn.width || 64, 16), 80);
+        const h = Math.min(Math.max(furn.height || 72, 16), 90);
+        let validated = this._validateDrawOps(furn.draw, w, h);
         if (validated.length < 2) {
           console.warn(`[Creative] Furniture "${furn.name}" has only ${validated.length} valid ops, skipping`);
           return;
         }
+        // Ensure furniture has proper 3D iso structure (poly faces + diamond top).
+        if (!this._hasIsoStructure(validated)) {
+          console.warn(`[Creative] Furniture "${furn.name}" lacks iso structure, auto-wrapping`);
+          const boxOps = this._makeIsoBoxOps(w, h, validated);
+          const detailOps = validated.filter(o => o.op !== 'diamond' || (o.hw < w / 3));
+          validated = [...boxOps, ...detailOps];
+        }
         const key = `furn_custom_${i}`;
         furn._texKey = key;
-        this._tex(key, w, h, g => this._execDraw(g, validated));
+        // Use outlined renderer for richer pixel-art look
+        this._texOutlined(key, w, h, g => this._execDraw(g, validated));
         validCount++;
       });
       console.log(`[Creative] Generated ${validCount}/${ca.furniture.length} custom furniture textures`);
@@ -958,13 +1211,24 @@ export default class RandomBootScene extends Phaser.Scene {
         if (!roomDecor?.items) continue;
         for (const item of roomDecor.items) {
           if (!item?.draw?.length) continue;
-          const w = Math.min(Math.max(item.width || 32, 8), 64);
-          const h = Math.min(Math.max(item.height || 32, 8), 72);
-          const validated = this._validateDrawOps(item.draw, w, h);
+          const w = Math.min(Math.max(item.width || 48, 8), 80);
+          const h = Math.min(Math.max(item.height || 48, 8), 90);
+          let validated = this._validateDrawOps(item.draw, w, h);
           if (validated.length < 2) { decoIdx++; continue; }
+          // Auto-wrap flat decorations (>24px) in iso box so they look 3D
+          if (w >= 24 && !this._hasIsoStructure(validated)) {
+            const boxOps = this._makeIsoBoxOps(w, h, validated);
+            const detailOps = validated.filter(o => o.op !== 'diamond' || (o.hw < w / 3));
+            validated = [...boxOps, ...detailOps];
+          }
           const key = `decor_${decoIdx++}`;
           item._texKey = key;
-          this._tex(key, w, h, g => this._execDraw(g, validated));
+          // Apply outline for detailed pixel-art look on larger items
+          if (w >= 24) {
+            this._texOutlined(key, w, h, g => this._execDraw(g, validated));
+          } else {
+            this._tex(key, w, h, g => this._execDraw(g, validated));
+          }
           decoValid++;
         }
       }

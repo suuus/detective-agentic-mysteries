@@ -174,7 +174,8 @@ document.querySelectorAll('.level-btn').forEach(btn => {
         characters: { incoming: ['net-line-arch-char'], outgoing: ['net-line-char-dir'] },
         director:   { incoming: ['net-line-char-dir'], outgoing: ['net-line-dir-creative'] },
         creative:   { incoming: ['net-line-dir-creative'], outgoing: ['net-line-cr-env','net-line-cr-props','net-line-cr-chars','net-line-creative-world'] },
-        world:      { incoming: ['net-line-creative-world'], outgoing: [] },
+        world:      { incoming: ['net-line-creative-world'], outgoing: ['net-line-world-dp'] },
+        dp:         { incoming: ['net-line-world-dp'], outgoing: [] },
       };
       const NET_SUB_MAP = {
         env: 'creative-env',
@@ -276,6 +277,7 @@ document.querySelectorAll('.level-btn').forEach(btn => {
         const forensics = nodeCenter('arch-node-forensics');
         const skeleton = nodeCenter('arch-node-skeleton');
         const creative = nodeCenter('arch-node-creative');
+        const dp = nodeCenter('arch-node-dp');
 
         // Player → Profiler
         addLine(player, profiler, 'arch-async done');
@@ -291,6 +293,8 @@ document.querySelectorAll('.level-btn').forEach(btn => {
         addLine(skeleton, director, 'arch-gen done');
         // Creative → Skeleton Key
         addLine(creative, skeleton, 'arch-gen done');
+        // DP → Creative (visual QA feedback)
+        addLine(dp, creative, 'arch-gen done');
 
         // NPC connections — each NPC connects to Player, Director, GameState, and each other
         for (const npc of archNpcCards) {
@@ -321,6 +325,7 @@ document.querySelectorAll('.level-btn').forEach(btn => {
           director: ['director'],
           creative: ['creative'],
           world: ['state'],
+          dp: ['dp'],
         };
         const nodeIds = nodeMap[stepId] || [];
         for (const nid of nodeIds) {
@@ -400,6 +405,7 @@ document.querySelectorAll('.level-btn').forEach(btn => {
         director: 'director',
         creative: 'creative',
         world_builder: 'world',
+        dp: 'dp',
       };
 
       try {
@@ -512,7 +518,7 @@ document.querySelectorAll('.level-btn').forEach(btn => {
             logEntry(`🎉 "${update.title}" is ready -- ${update.suspects} suspects, ${update.evidenceCount} clues`, 'entry-complete');
             if (genSubtitle) genSubtitle.textContent = `"${update.title}" -- entering the scene...`;
             // Light up all runtime architecture nodes to show the full system is ready
-            ['player','director','profiler','state','narrator','forensics'].forEach(nid => {
+            ['player','director','profiler','state','narrator','forensics','dp'].forEach(nid => {
               const n = document.getElementById('arch-node-' + nid);
               if (n) { n.classList.remove('active'); n.classList.add('done'); }
             });
@@ -545,6 +551,29 @@ document.querySelectorAll('.level-btn').forEach(btn => {
         }  // end while (!done)
 
         await api.selectLevel('random');
+
+        // ── Director of Photography: Visual QA ──
+        setStepState('dp', 'active');
+        setArchState('dp', 'active');
+        logEntry('🎬 Director of Photography reviewing visual quality...', 'entry-status');
+        try {
+          const dpReview = await api.dpReview();
+          if (dpReview.overallScore !== undefined) {
+            const emoji = dpReview.overallScore >= 7 ? '✅' : dpReview.overallScore >= 5 ? '⚠️' : '❌';
+            logEntry(`${emoji} Visual QA: ${dpReview.overallScore}/10 — ${dpReview.overallNotes || ''}`, dpReview.overallScore >= 5 ? 'entry-data' : 'entry-error');
+            if (dpReview.issues?.length > 0) {
+              const issueText = dpReview.issues.slice(0, 5).map(i => `  [${i.severity}] ${i.category}${i.item ? ' "' + i.item + '"' : ''}: ${i.description}`).join('\n');
+              logEntry(`🔍 ${dpReview.issues.length} issues:\n${issueText}`, 'entry-data');
+            }
+          }
+          setStepState('dp', 'done');
+          setArchState('dp', 'done');
+        } catch (err) {
+          console.warn('DP review failed (non-blocking):', err.message);
+          logEntry('🎬 DP review skipped (timeout or unavailable)', 'entry-data');
+          setStepState('dp', 'done');
+          setArchState('dp', 'done');
+        }
 
         // Build suspects list from generated characters
         const chars = await api.getCharacters();

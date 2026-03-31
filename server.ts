@@ -17,6 +17,8 @@ import { buildSkeletonPrompt, buildCharacterPrompt, buildDirectorPromptRequest }
 import type { GeneratedMystery } from "./src/mystery-generator.js";
 import { buildEnvironmentPrompt, buildPropsPrompt, buildCharacterAssetsPrompt, getDefaultCreativeAssets } from "./src/creative-agent.js";
 import type { CreativeAssets } from "./src/creative-agent.js";
+import { captureTextureGrid, closeBrowser, DP_SYSTEM_PROMPT, buildRepairPrompt } from "./src/cinematographer.js";
+import type { DPReview, TextureMetric } from "./src/cinematographer.js";
 
 let activeLevel: 'manor' | 'cruise' | 'random' = 'manor';
 let generatedMystery: GeneratedMystery | null = null;
@@ -2986,6 +2988,116 @@ app.get("/api/red-herring/check", async (_req, res) => {
     }
   }
   res.json({ shouldActivate, active: redHerringActive, npc: redHerringNPC ? { id: redHerringNPC.id, name: redHerringNPC.name, x: redHerringNPC.x, y: redHerringNPC.y, room: redHerringNPC.room, color: redHerringNPC.color } : null });
+});
+
+// ── Director of Photography — Visual QA ─────────────────────────
+
+app.post("/api/dp/review", async (_req, res) => {
+  if (!generatedMystery) {
+    res.status(400).json({ error: 'No generated mystery to review' });
+    return;
+  }
+
+  console.log("🎬 Director of Photography: capturing texture grid...");
+  try {
+    // Step 1: Capture screenshot + extract texture metrics from browser
+    const { screenshot, sections, metrics } = await captureTextureGrid(PORT);
+    const screenshotBase64 = screenshot.toString('base64');
+    console.log(`📸 Captured ${sections.length} sections, ${metrics.length} texture metrics`);
+
+    // Step 2: Send metrics to DP agent for evaluation
+    let dpSession: CopilotSession | null = null;
+    try {
+      try { await client.deleteSession("blackwood-dp"); } catch {}
+      dpSession = await client.createSession({
+        sessionId: "blackwood-dp",
+        model: modelSettings.architect,
+        streaming: false,
+        tools: [],
+        onPermissionRequest: approveAll,
+        infiniteSessions: { enabled: false },
+        systemMessage: { mode: "replace", content: DP_SYSTEM_PROMPT },
+      });
+
+      // Format metrics for the model
+      const metricsReport = metrics.map((m: any) =>
+        `[${m.category}] "${m.name}" ${m.width}×${m.height}: ${m.filledPixelPercent}% filled, ${m.uniqueColors} colors, drawOps=${m.drawOpCount}${m.issues.length ? ' ⚠️ ' + m.issues.join(', ') : ''}`
+      ).join('\n');
+
+      console.log("🎬 DP reviewing texture metrics...");
+      const result = await dpSession.sendAndWait({
+        prompt: `Review the procedurally generated textures for "${generatedMystery.title}" (setting: ${generatedMystery.setting}).
+
+TEXTURE METRICS (extracted from rendered browser canvas):
+${metricsReport}
+
+Section summary: ${sections.map((s: any) => `${s.label}: ${s.count}`).join(', ')}
+
+Based on these metrics, evaluate the visual quality. Textures with <10% pixel fill are likely invisible/broken. Textures with <3 unique colors are likely monochrome. Evidence items (16×16) should have bright colors. Furniture items should be 40-54px.
+
+Respond with your JSON review.`,
+      }, 60_000);
+
+      const reviewText = result?.data?.content ?? '';
+      let review: DPReview;
+      try {
+        const jsonMatch = reviewText.match(/\{[\s\S]*\}/);
+        review = JSON.parse(jsonMatch ? jsonMatch[0] : reviewText);
+        review.passesQuality = (review.overallScore ?? 0) >= 5;
+        review.screenshotBase64 = screenshotBase64;
+      } catch {
+        console.warn("🎬 DP review parse failed, raw:", reviewText.slice(0, 200));
+        // Generate review from metrics directly
+        const criticalIssues: any[] = [];
+        for (const m of metrics) {
+          if (m.filledPixelPercent < 10) criticalIssues.push({ category: m.category, item: m.name, severity: 'critical', description: 'Texture is mostly empty/invisible', suggestion: 'Regenerate with coordinates within canvas bounds' });
+          else if (m.uniqueColors < 3 && m.category !== 'ambient') criticalIssues.push({ category: m.category, item: m.name, severity: 'major', description: 'Monochrome — lacks shading/detail', suggestion: 'Add distinct colors for iso faces (dark/medium/light)' });
+        }
+        review = {
+          overallScore: criticalIssues.length > 3 ? 3 : 6,
+          overallNotes: `Auto-generated from metrics: ${criticalIssues.length} issues detected`,
+          categories: sections.map((s: any) => ({ name: s.label, score: 5, count: s.count, notes: 'auto-scored' })),
+          issues: criticalIssues,
+          passesQuality: criticalIssues.length <= 3,
+          screenshotBase64,
+        };
+      }
+
+      console.log(`🎬 DP verdict: ${review.overallScore}/10 — ${review.issues.length} issues found`);
+      for (const issue of review.issues) {
+        console.log(`   [${issue.severity}] ${issue.category}${issue.item ? ` "${issue.item}"` : ''}: ${issue.description}`);
+      }
+
+      res.json(review);
+    } finally {
+      if (dpSession) {
+        try { await dpSession.disconnect(); } catch {}
+        try { await client.deleteSession("blackwood-dp"); } catch {}
+      }
+      await closeBrowser();
+    }
+  } catch (err: any) {
+    console.error("🎬 DP review failed:", err.message);
+    await closeBrowser();
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/dp/screenshot", async (_req, res) => {
+  if (!generatedMystery) {
+    res.status(400).json({ error: 'No generated mystery' });
+    return;
+  }
+  try {
+    const { screenshot, sections } = await captureTextureGrid(PORT);
+    await closeBrowser();
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Content-Disposition', 'inline; filename="dp-review.png"');
+    res.send(screenshot);
+  } catch (err: any) {
+    await closeBrowser();
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Reset

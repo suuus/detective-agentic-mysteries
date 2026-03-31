@@ -304,6 +304,19 @@ export class GameAPI {
     return res.json();
   }
 
+  // ── Director of Photography ────────────────────────────────────
+  async dpReview() {
+    const res = await fetch(`${this.baseUrl}/api/dp/review`, { method: 'POST' });
+    if (!res.ok) throw new Error(`DP review failed (${res.status})`);
+    return res.json();
+  }
+
+  async dpScreenshot() {
+    const res = await fetch(`${this.baseUrl}/api/dp/screenshot`);
+    if (!res.ok) throw new Error(`DP screenshot failed (${res.status})`);
+    return res.blob();
+  }
+
   // ── Hidden Room ────────────────────────────────────────────────
   async getHiddenRoom() {
     const res = await fetch(`${this.baseUrl}/api/hidden-room`);

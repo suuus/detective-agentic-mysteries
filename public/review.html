@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>DP Review — Texture Grid</title>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+  <style>
+    body { background: #111; color: #ccc; font-family: monospace; margin: 0; }
+    #status { padding: 8px 16px; font-size: 13px; }
+    #game { display: block; }
+  </style>
+</head>
+<body>
+<div id="status">Loading textures…</div>
+<div id="game"></div>
+<script type="module">
+/**
+ * Texture Review Page — renders all generated textures in a labelled grid
+ * so the Director of Photography agent can screenshot and evaluate them.
+ *
+ * Flow:
+ *   1. Fetch world data from /api/mystery/rooms
+ *   2. Boot a minimal Phaser scene that generates all textures (reuses RandomBootScene logic)
+ *   3. Render every texture to a grid with labels
+ *   4. Set window.__DP_READY = true when done (Playwright waits for this)
+ */
+import RandomBootScene from './js/scenes/RandomBootScene.js';
+
+class ReviewScene extends Phaser.Scene {
+  constructor() { super({ key: 'ReviewScene' }); }
+
+  create() {
+    const world = window._generatedWorld;
+    if (!world) {
+      this.add.text(10, 10, 'No world data', { color: '#ff4444', fontSize: '16px' });
+      window.__DP_READY = true;
+      return;
+    }
+
+    const PAD = 6;
+    const COL_W = 80;
+    const ROW_H = 90;
+    let col = 0, row = 0;
+    const maxCols = Math.floor((this.cameras.main.width - PAD) / COL_W);
+    const sections = []; // { label, textures: [{key, w, h}] }
+
+    // ── Collect all texture keys by category ──
+    const ca = world.creativeAssets || {};
+
+    // Furniture
+    const furnKeys = [];
+    ['furn_table','furn_desk','furn_bookshelf','furn_plant','furn_crate','furn_cabinet'].forEach(k => {
+      if (this.textures.exists(k)) furnKeys.push({ key: k, label: k.replace('furn_','') });
+    });
+    if (Array.isArray(ca.furniture)) {
+      ca.furniture.forEach((f, i) => {
+        const k = f._texKey || `furn_custom_${i}`;
+        if (this.textures.exists(k)) furnKeys.push({ key: k, label: f.name || `custom_${i}` });
+      });
+    }
+    if (furnKeys.length) sections.push({ label: 'FURNITURE', textures: furnKeys });
+
+    // Evidence
+    const evKeys = [];
+    for (const ev of (world.evidence || [])) {
+      const k = 'ev_' + ev.id;
+      if (this.textures.exists(k)) evKeys.push({ key: k, label: ev.name || ev.id });
+    }
+    if (evKeys.length) sections.push({ label: 'EVIDENCE', textures: evKeys });
+
+    // Decorations
+    const decoKeys = [];
+    if (Array.isArray(ca.decorations)) {
+      for (const rd of ca.decorations) {
+        for (const item of (rd.items || [])) {
+          if (item._texKey && this.textures.exists(item._texKey)) {
+            decoKeys.push({ key: item._texKey, label: item.name || item._texKey });
+          }
+        }
+      }
+    }
+    if (decoKeys.length) sections.push({ label: 'DECORATIONS', textures: decoKeys });
+
+    // Wall tile
+    if (this.textures.exists('tile_wall')) {
+      sections.push({ label: 'WALL', textures: [{ key: 'tile_wall', label: 'wall' }] });
+    }
+
+    // NPCs
+    const npcKeys = [];
+    for (const ch of (world.characters || [])) {
+      const k = 'npc_' + ch.id;
+      if (this.textures.exists(k)) npcKeys.push({ key: k, label: ch.name || ch.id });
+    }
+    if (npcKeys.length) sections.push({ label: 'NPCs', textures: npcKeys });
+
+    // Portraits
+    const portKeys = [];
+    for (const ch of (world.characters || [])) {
+      const k = 'portrait_' + ch.id;
+      if (this.textures.exists(k)) portKeys.push({ key: k, label: ch.name || ch.id });
+    }
+    if (portKeys.length) sections.push({ label: 'PORTRAITS', textures: portKeys });
+
+    // Ambient props
+    const propKeys = [];
+    if (Array.isArray(ca.ambientProps)) {
+      ca.ambientProps.forEach((p, i) => {
+        const k = p._texKey || `prop_${i}`;
+        if (this.textures.exists(k)) propKeys.push({ key: k, label: p.name || `prop_${i}` });
+      });
+    }
+    if (propKeys.length) sections.push({ label: 'AMBIENT PROPS', textures: propKeys });
+
+    // ── Render grid ──
+    let y = PAD;
+    const bg = this.add.graphics();
+
+    for (const section of sections) {
+      // Section header
+      this.add.text(PAD, y, `── ${section.label} (${section.textures.length}) ──`, {
+        fontSize: '11px', color: '#c9a84c', fontFamily: 'monospace'
+      });
+      y += 16;
+
+      col = 0;
+      for (const tex of section.textures) {
+        const x = PAD + col * COL_W;
+        const cellY = y;
+
+        // Dark background cell
+        bg.fillStyle(0x1a1a1a, 0.8);
+        bg.fillRect(x, cellY, COL_W - 4, ROW_H - 4);
+
+        // Render the texture centered in cell
+        const frame = this.textures.getFrame(tex.key);
+        const tw = frame?.width || 32;
+        const th = frame?.height || 32;
+        const scale = Math.min((COL_W - 8) / tw, (ROW_H - 24) / th, 2);
+        const img = this.add.image(x + (COL_W - 4) / 2, cellY + (ROW_H - 20) / 2, tex.key);
+        img.setScale(scale);
+
+        // Label below
+        const label = tex.label.length > 10 ? tex.label.slice(0, 10) + '…' : tex.label;
+        this.add.text(x + 2, cellY + ROW_H - 18, label, {
+          fontSize: '8px', color: '#888', fontFamily: 'monospace'
+        });
+
+        // Size badge
+        this.add.text(x + COL_W - 8, cellY + 2, `${tw}×${th}`, {
+          fontSize: '7px', color: '#555', fontFamily: 'monospace'
+        }).setOrigin(1, 0);
+
+        col++;
+        if (col >= maxCols) { col = 0; y += ROW_H; }
+      }
+      y += (col > 0 ? ROW_H : 0) + 8;
+      col = 0;
+    }
+
+    // Summary
+    const totalTextures = sections.reduce((s, sec) => s + sec.textures.length, 0);
+    document.getElementById('status').textContent =
+      `✅ ${totalTextures} textures across ${sections.length} categories — ${world.setting || 'unknown setting'}`;
+
+    // Signal to Playwright that rendering is complete
+    window.__DP_READY = true;
+    window.__DP_SECTIONS = sections.map(s => ({ label: s.label, count: s.textures.length }));
+  }
+}
+
+// ── Boot ──
+async function init() {
+  try {
+    const res = await fetch('/api/mystery/rooms');
+    const data = await res.json();
+    if (!data.rooms || data.rooms.length === 0) {
+      document.getElementById('status').textContent = '⚠️ No generated world — generate a mystery first';
+      window.__DP_READY = true;
+      return;
+    }
+    window._generatedWorld = data;
+
+    // Boot scene that generates textures without starting the game world
+    class BootForReview extends Phaser.Scene {
+      constructor() { super({ key: 'BootForReview' }); }
+      async create() {
+        // Borrow texture generation methods from RandomBootScene
+        const boot = new RandomBootScene();
+        // Copy method bindings so they can use `this` (the active scene)
+        const methods = ['_tex','_hex','_execDraw','_validateDrawOps',
+          '_genTiles','_genFurniture','_genPlayer','_genPrompts',
+          '_genNPCs','_genEvidence','_genCrimeScene','_genStairs','_genCreativeAssets'];
+        for (const m of methods) {
+          if (typeof boot[m] === 'function') this[m] = boot[m].bind(this);
+        }
+        try {
+          this._genTiles();
+          this._genFurniture();
+          this._genPlayer();
+          this._genPrompts();
+          this._genNPCs();
+          this._genEvidence();
+          this._genCrimeScene();
+          this._genStairs();
+          this._genCreativeAssets();
+          console.log('[Review] All textures generated');
+        } catch(err) {
+          console.error('[Review] Texture generation failed:', err);
+        }
+        this.scene.start('ReviewScene');
+      }
+    }
+
+    const game = new Phaser.Game({
+      type: Phaser.CANVAS, // Force Canvas for pixel readback
+      width: 960,
+      height: 1200,
+      parent: 'game',
+      backgroundColor: '#0a0a0a',
+      scene: [BootForReview, ReviewScene],
+      physics: { default: 'arcade' },
+    });
+  } catch (err) {
+    document.getElementById('status').textContent = `❌ ${err.message}`;
+    window.__DP_READY = true;
+  }
+}
+
+init();
+</script>
+</body>
+</html>

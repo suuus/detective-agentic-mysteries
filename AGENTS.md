@@ -32,6 +32,7 @@ The server runs on port 3000. It serves static files from `public/` and provides
 │   │   ├── cruise.ts            # Cruise ship level definition
 │   │   └── cruise-director.ts   # Cruise Director system prompt
 │   ├── creative-agent.ts        # Creative Agency — AI-designed visual assets (3 sub-agents)
+│   ├── cinematographer.ts       # Director of Photography — Playwright visual QA agent
 │   ├── mystery-generator.ts     # Skeleton Key — procedural mystery generation
 │   ├── director.ts              # AI Director agent (orchestrates nights)
 │   ├── narrator.ts              # Narrator agent (atmospheric prose + hints)
@@ -92,6 +93,7 @@ The server runs on port 3000. It serves static files from `public/` and provides
 | Red Herring | blackwood-{dynamic} | Dynamically spawned misleading NPC | gpt-4.1 |
 | Skeleton Key | blackwood-architect | Procedural mystery generation | gpt-4.1 |
 | Creative Agency | blackwood-creative-{env,props,chars} | 3 parallel agents for visual asset generation | gpt-4.1 |
+| Cinematographer | blackwood-dp | Director of Photography — visual QA via Playwright | gpt-4.1 |
 
 Each NPC session has:
 - `systemMessage: { mode: "replace" }` — full character prompt

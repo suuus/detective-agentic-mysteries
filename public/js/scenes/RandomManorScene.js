@@ -965,9 +965,9 @@ export default class RandomManorScene extends Phaser.Scene {
 
   _placeFurniture(T) {
     const ox = this._isoOffsetX, oy = this._isoOffsetY;
-    // Prefer AI-designed furniture; generic items only as fallback padding
+    // Prefer AI-designed furniture; generic items as reliable fallback
     const customKeys = [];
-    const genericKeys = ['furn_table', 'furn_desk', 'furn_bookshelf', 'furn_plant'];
+    const genericKeys = ['furn_table', 'furn_desk', 'furn_bookshelf', 'furn_plant', 'furn_crate', 'furn_cabinet'];
     const ca = window._generatedWorld?.creativeAssets;
     if (Array.isArray(ca?.furniture)) {
       for (const furn of ca.furniture) {
@@ -976,22 +976,35 @@ export default class RandomManorScene extends Phaser.Scene {
         }
       }
     }
-    // Custom items weighted 3x over generics so AI furniture dominates
-    const furnKeys = customKeys.length > 0
-      ? [...customKeys, ...customKeys, ...customKeys, ...genericKeys]
-      : genericKeys;
+    // Mix custom + generic so rooms always have recognizable furniture.
+    const furnKeys = customKeys.length >= 4
+      ? [...customKeys, ...customKeys, ...genericKeys]
+      : [...customKeys, ...genericKeys];
 
     const rooms = Object.values(this.rooms);
     for (const room of rooms) {
-      // Scale furniture count with room size and available furniture types
+      // Scale furniture count with room size
       const roomArea = room.w * room.h;
-      const baseCount = roomArea >= 80 ? 4 : roomArea >= 40 ? 3 : 2;
+      const baseCount = roomArea >= 80 ? 5 : roomArea >= 40 ? 4 : 2;
       const count = Math.min(baseCount, furnKeys.length);
       const floorNum = this.multiFloor ? (room.floorNum ?? 0) : 0;
-      for (let i = 0; i < count; i++) {
-        const fx = room.x + 2 + Math.floor(Math.random() * (room.w - 4));
-        const fy = room.y + 2 + Math.floor(Math.random() * (room.h - 4));
-        const key = furnKeys[Math.floor(Math.random() * furnKeys.length)];
+
+      // Generate composed placement positions — furniture placed in logical spots
+      const positions = this._composeFurniturePositions(room, count);
+      const usedKeys = new Set();
+
+      for (let i = 0; i < positions.length; i++) {
+        const { fx, fy } = positions[i];
+        // Pick furniture, avoid repeats where possible
+        let key;
+        const available = furnKeys.filter(k => !usedKeys.has(k));
+        if (available.length > 0) {
+          key = available[Math.floor(Math.random() * available.length)];
+        } else {
+          key = furnKeys[Math.floor(Math.random() * furnKeys.length)];
+        }
+        usedKeys.add(key);
+
         // Visual at iso position
         const { x, y } = tileToScreen(fx, fy, ox, oy);
         const img = this.add.image(x, y, key)
@@ -1007,6 +1020,79 @@ export default class RandomManorScene extends Phaser.Scene {
         }
       }
     }
+  }
+
+  /**
+   * Generate logical furniture positions within a room.
+   * Places items against walls, in corners, and at the center — like a designed space.
+   */
+  _composeFurniturePositions(room, count) {
+    const positions = [];
+    const used = new Set();
+    const key = (x, y) => `${x},${y}`;
+    const margin = 1; // 1 tile from wall for walkability
+
+    // Named spots in priority order: corners, wall-centers, center
+    const spots = [];
+    // Corners (against walls — great for shelves, cabinets, plants)
+    spots.push({ fx: room.x + margin + 1, fy: room.y + margin + 1 });     // top-left corner
+    spots.push({ fx: room.x + room.w - margin - 2, fy: room.y + margin + 1 }); // top-right corner
+    spots.push({ fx: room.x + margin + 1, fy: room.y + room.h - margin - 2 }); // bottom-left corner
+    spots.push({ fx: room.x + room.w - margin - 2, fy: room.y + room.h - margin - 2 }); // bottom-right corner
+    // Wall centers (against walls — desks, shelves)
+    const midX = room.x + Math.floor(room.w / 2);
+    const midY = room.y + Math.floor(room.h / 2);
+    spots.push({ fx: midX, fy: room.y + margin + 1 });     // top wall center
+    spots.push({ fx: midX, fy: room.y + room.h - margin - 2 }); // bottom wall center
+    spots.push({ fx: room.x + margin + 1, fy: midY });     // left wall center
+    spots.push({ fx: room.x + room.w - margin - 2, fy: midY }); // right wall center
+    // Room center (tables, centerpiece)
+    spots.push({ fx: midX, fy: midY });
+    // Offset center spots
+    spots.push({ fx: midX - 2, fy: midY + 1 });
+    spots.push({ fx: midX + 2, fy: midY - 1 });
+
+    // Shuffle spots, then take the first 'count' valid ones
+    for (let i = spots.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [spots[i], spots[j]] = [spots[j], spots[i]];
+    }
+
+    for (const spot of spots) {
+      if (positions.length >= count) break;
+      // Validate bounds
+      const fx = Math.max(room.x + 1, Math.min(room.x + room.w - 2, spot.fx));
+      const fy = Math.max(room.y + 1, Math.min(room.y + room.h - 2, spot.fy));
+      const k = key(fx, fy);
+      if (used.has(k)) continue;
+      // Don't place too close to another piece
+      let tooClose = false;
+      for (const p of positions) {
+        if (Math.abs(p.fx - fx) <= 1 && Math.abs(p.fy - fy) <= 1) { tooClose = true; break; }
+      }
+      if (tooClose) continue;
+      used.add(k);
+      positions.push({ fx, fy });
+    }
+
+    // Fill any remaining slots with random valid positions
+    let attempts = 0;
+    while (positions.length < count && attempts < 20) {
+      attempts++;
+      const fx = room.x + 2 + Math.floor(Math.random() * Math.max(1, room.w - 4));
+      const fy = room.y + 2 + Math.floor(Math.random() * Math.max(1, room.h - 4));
+      const k = key(fx, fy);
+      if (used.has(k)) continue;
+      let tooClose = false;
+      for (const p of positions) {
+        if (Math.abs(p.fx - fx) <= 1 && Math.abs(p.fy - fy) <= 1) { tooClose = true; break; }
+      }
+      if (tooClose) continue;
+      used.add(k);
+      positions.push({ fx, fy });
+    }
+
+    return positions;
   }
 
   _placeNPCs(T, world) {
